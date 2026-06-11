@@ -165,8 +165,10 @@ private fun FenlzerScaffold(
     val density = LocalDensity.current
     val isKeyboardVisible = WindowInsets.ime.getBottom(density) > 0
     val isPlayerRoute = currentRoute == FenlzerRoute.Player.route
+    val isDiagnosticsRoute = currentRoute == FenlzerRoute.Diagnostics.route
+    val hidesAppChrome = isPlayerRoute || isDiagnosticsRoute
     val hideTopBar =
-        isPlayerRoute ||
+        hidesAppChrome ||
             currentRoute == FenlzerRoute.Home.route ||
             currentRoute == FenlzerRoute.Import.route ||
             currentRoute == FenlzerRoute.Playlists.route ||
@@ -393,7 +395,7 @@ private fun FenlzerScaffold(
             }
         },
         bottomBar = {
-            if (!isPlayerRoute && !isKeyboardVisible) {
+            if (!hidesAppChrome && !isKeyboardVisible) {
                 Column {
                 MiniPlayer(
                     playbackState = playbackState,
@@ -1260,11 +1262,13 @@ private fun FenlzerTopBar(
     val isSettings = currentRoute == FenlzerRoute.Settings.route
     val isQueue = currentRoute == FenlzerRoute.Queue.route
     val isStatistics = currentRoute == FenlzerRoute.Statistics.route
+    val isDiagnostics = currentRoute == FenlzerRoute.Diagnostics.route
     val title = when (currentRoute) {
         FenlzerRoute.Playlists.route -> FenlzerRoute.Playlists.label
         FenlzerRoute.Import.route -> FenlzerRoute.Import.label
         FenlzerRoute.Settings.route -> FenlzerRoute.Settings.label
         FenlzerRoute.Statistics.route -> FenlzerRoute.Statistics.label
+        FenlzerRoute.Diagnostics.route -> FenlzerRoute.Diagnostics.label
         FenlzerRoute.Queue.route -> FenlzerRoute.Queue.label
         else -> "Fenlzer"
     }
@@ -1272,7 +1276,7 @@ private fun FenlzerTopBar(
     TopAppBar(
         title = { Text(text = title) },
         navigationIcon = {
-            if (isSettings || isQueue || isStatistics) {
+            if (isSettings || isQueue || isStatistics || isDiagnostics) {
                 IconButton(onClick = onBack) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.ArrowBack,

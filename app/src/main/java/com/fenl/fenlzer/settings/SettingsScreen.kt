@@ -451,12 +451,14 @@ fun SettingsScreen(
             apiDiagnostics.take(6).forEach { entry ->
                 DiagnosticRow(entry)
             }
-            Button(
-                onClick = onOpenDiagnostics,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(text = "View all diagnostics (${apiDiagnostics.size})")
-            }
+        }
+        Button(
+            onClick = onOpenDiagnostics,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("viewAllDiagnosticsButton")
+        ) {
+            Text(text = "View all diagnostics (${apiDiagnostics.size})")
         }
 
         HorizontalDivider()
