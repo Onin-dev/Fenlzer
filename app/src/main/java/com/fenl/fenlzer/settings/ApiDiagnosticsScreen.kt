@@ -46,6 +46,8 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import androidx.compose.foundation.layout.widthIn
+import com.fenl.fenlzer.ui.components.AdaptiveBreakpoints
 
 private enum class DiagnosticFilter(val label: String) {
     ALL("All"),
@@ -127,6 +129,7 @@ fun ApiDiagnosticsScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .widthIn(max = AdaptiveBreakpoints.DEFAULT_MAX_CONTENT_WIDTH_DP.dp)
                 .padding(padding)
         ) {
             DiagnosticsSummary(

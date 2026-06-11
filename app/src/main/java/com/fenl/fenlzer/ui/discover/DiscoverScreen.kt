@@ -51,6 +51,7 @@ import com.fenl.fenlzer.data.repository.DiscoverUiState
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.compose.foundation.layout.widthIn
 
 @Composable
 fun DiscoverScreen(
@@ -71,6 +72,7 @@ fun DiscoverScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .widthIn(max = 1040.dp)
             .testTag("discoverScreen")
     ) {
         DiscoverToolbar(

@@ -71,6 +71,7 @@ import com.fenl.fenlzer.importing.youtube.YoutubeSearchResultItem
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.compose.foundation.layout.widthIn
 
 @Composable
 fun ImportScreen(
@@ -107,6 +108,7 @@ fun ImportScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .widthIn(max = 1040.dp)
             .imePadding()
             .verticalScroll(scrollState)
             .padding(horizontal = 18.dp, vertical = 14.dp)

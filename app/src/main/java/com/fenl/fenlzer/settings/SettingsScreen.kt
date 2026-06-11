@@ -47,6 +47,7 @@ import com.fenl.fenlzer.data.settings.ThemeMode
 import com.fenl.fenlzer.data.storage.FenlzerStorageUsage
 import kotlinx.coroutines.launch
 import java.util.Locale
+import com.fenl.fenlzer.ui.components.FenlzerAdaptiveScrollableColumn
 
 @Composable
 fun SettingsScreen(
@@ -126,14 +127,10 @@ fun SettingsScreen(
         )
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp)
-            .testTag("settingsScreen"),
+    FenlzerAdaptiveScrollableColumn(
+        modifier = modifier.testTag("settingsScreen"),
         verticalArrangement = Arrangement.spacedBy(20.dp)
-    ) {
+    ) { _ ->
         Text(
             text = "Playback defaults",
             style = MaterialTheme.typography.titleLarge

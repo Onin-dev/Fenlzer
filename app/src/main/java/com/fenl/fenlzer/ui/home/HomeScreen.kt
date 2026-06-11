@@ -90,6 +90,7 @@ import com.fenl.fenlzer.data.repository.LibraryTrack
 import com.fenl.fenlzer.data.settings.HomeSort
 import com.fenl.fenlzer.domain.text.SearchNormalizer
 import java.util.Locale
+import androidx.compose.foundation.layout.widthIn
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -200,6 +201,7 @@ fun HomeScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .widthIn(max = 1180.dp)
             .padding(
                 horizontal = if (isLandscape) 12.dp else 16.dp,
                 vertical = if (isLandscape) 8.dp else 12.dp

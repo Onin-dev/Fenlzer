@@ -221,6 +221,7 @@ private fun PlaylistOverview(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .widthIn(max = 1180.dp)
             .verticalScroll(rememberScrollState())
             .padding(
                 horizontal = if (isLandscape) 14.dp else 16.dp,

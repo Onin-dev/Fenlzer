@@ -25,6 +25,7 @@ import com.fenl.fenlzer.data.repository.StatisticsRecentEvent
 import com.fenl.fenlzer.data.repository.StatisticsSummary
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import androidx.compose.foundation.layout.widthIn
 
 @Composable
 fun StatisticsScreen(
@@ -34,6 +35,7 @@ fun StatisticsScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
+            .widthIn(max = 1040.dp)
             .testTag("statisticsScreen"),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
