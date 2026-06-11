@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+        Fenlzer's API base URL is user-configurable and may point at a personal
+        local HTTP server during development or private use.
+    -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

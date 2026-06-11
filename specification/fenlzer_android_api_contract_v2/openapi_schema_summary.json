@@ -1,0 +1,22 @@
+{
+  "title": "Fenlzer API",
+  "version": "1.0.0",
+  "typed_success_response_count": 0,
+  "schemas": [
+    "BatchDownloadRequest",
+    "CancelRequest",
+    "CompleteUploadRequest",
+    "ConfirmFileRequest",
+    "CreateDownloadRequest",
+    "CreateHistoryUploadRequest",
+    "DiscoverRefreshRequest",
+    "HTTPValidationError",
+    "JobStatusRequest",
+    "PlaylistPreviewRequest",
+    "ReorderRequest",
+    "RetryRequest",
+    "SearchRequest",
+    "StreamResolveRequest",
+    "ValidationError"
+  ]
+}

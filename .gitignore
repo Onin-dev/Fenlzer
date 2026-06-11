@@ -1,0 +1,57 @@
+# Gradle / Android build outputs
+.gradle/
+build/
+app/build/
+*/build/
+
+# Generated APKs / bundles / artifacts
+*.apk
+*.ap_
+*.aab
+app/build/outputs/
+
+# Local Android SDK configuration
+local.properties
+
+# Android Studio / IntelliJ local files
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Kotlin / KSP / Compose generated caches
+.kotlin/
+kspCaches/
+**/kspCaches/
+
+# Native / external builds
+.externalNativeBuild/
+.cxx/
+
+# Secrets / environment files
+.env
+*.env
+.env.*
+secrets.properties
+apikey.properties
+local.secrets.properties
+
+# Signing keys / certificates
+*.jks
+*.keystore
+*.pem
+*.key
+*.p12
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
