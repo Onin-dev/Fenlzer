@@ -67,6 +67,7 @@ import com.fenl.fenlzer.data.repository.PlaylistMembershipTarget
 import com.fenl.fenlzer.data.repository.SmartPlaylistIds
 import com.fenl.fenlzer.data.repository.StatisticsSummary
 import com.fenl.fenlzer.data.storage.FenlzerStorageUsage
+import com.fenl.fenlzer.settings.ApiDiagnosticsScreen
 import com.fenl.fenlzer.settings.SettingsScreen
 import com.fenl.fenlzer.ui.components.AddToPlaylistDialog
 import com.fenl.fenlzer.ui.discover.DiscoverScreen
@@ -555,7 +556,7 @@ private fun FenlzerNavHost(
     var pendingDeleteTracks by remember { mutableStateOf(emptyList<LibraryTrack>()) }
     var storageUsage by remember { mutableStateOf<FenlzerStorageUsage?>(null) }
     val apiDiagnosticsFlow = remember(appGraph.database) {
-        appGraph.database?.apiDiagnosticDao()?.observeRecent(limit = 100)
+        appGraph.database?.apiDiagnosticDao()?.observeRecent(limit = 500)
     }
     val apiDiagnostics by apiDiagnosticsFlow
         ?.collectAsStateWithLifecycle(initialValue = emptyList())
@@ -1051,6 +1052,21 @@ private fun FenlzerNavHost(
                 }
             )
         }
+
+        composable(FenlzerRoute.Diagnostics.route) {
+            ApiDiagnosticsScreen(
+                entries = apiDiagnostics,
+                onBack = { navController.popBackStack() },
+                onClearDiagnostics = {
+                    appGraph.database?.let { database ->
+                        coroutineScope.launch {
+                            database.apiDiagnosticDao().clearAll()
+                        }
+                    }
+                }
+            )
+        }
+
         composable(FenlzerRoute.Statistics.route) {
             val statsFlow = remember(appGraph.statsRepository) {
                 appGraph.statsRepository?.observeStatisticsSummary()
@@ -1196,7 +1212,7 @@ private fun FenlzerNavHost(
                 apiDiagnostics = apiDiagnostics,
                 onApiSettingsSaved = appGraph.apiRepository::saveApiSettings,
                 onTestApiConnection = appGraph.apiRepository::testHealth,
-                onOpenDiagnostics = {},
+                onOpenDiagnostics = { navController.navigate(FenlzerRoute.Diagnostics.route) },
                 appVersion = appVersion
             )
         }

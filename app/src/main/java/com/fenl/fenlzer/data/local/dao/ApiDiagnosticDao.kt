@@ -28,6 +28,9 @@ interface ApiDiagnosticDao {
     )
     suspend fun trimToLatest(limit: Int = 500)
 
+    @Query("DELETE FROM api_diagnostic_entries")
+    suspend fun clearAll()
+
     @Transaction
     suspend fun insertAndTrim(entry: ApiDiagnosticEntryEntity, limit: Int = 500) {
         insert(entry)
