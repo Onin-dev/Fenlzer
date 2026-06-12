@@ -55,3 +55,6 @@ Thumbs.db
 *.temp
 *.swp
 *.swo
+
+# Makefile
+Makefile

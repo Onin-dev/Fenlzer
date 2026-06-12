@@ -22,19 +22,17 @@ import kotlin.math.abs
 /**
  * Handle-only reorder affordance.
  *
- * Queue rows use [onDragDelta] for live Deezer-style dragging: the dragged row
- * stays under the finger and only commits a move after it crosses a row boundary.
- * Existing playlist rows can keep using [onMoveUp]/[onMoveDown]; in that fallback
- * mode this component still exposes only the drag handle, not arrow buttons.
+ * Queue rows pass a live drag session through [onDragStart], [onDragDelta], and
+ * [onDragEnd]. Playlist rows can keep using the one-step fallback callbacks.
  */
 @Composable
 fun DragStepHandle(
-    canMoveUp: Boolean = true,
-    canMoveDown: Boolean = true,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     modifier: Modifier = Modifier,
-    enabled: Boolean = canMoveUp || canMoveDown,
+    enabled: Boolean = true,
+    canMoveUp: Boolean = enabled,
+    canMoveDown: Boolean = enabled,
     contentDescription: String = "Reorder",
     testTag: String = "dragStepHandle",
     onDragStart: (() -> Unit)? = null,
@@ -51,7 +49,14 @@ fun DragStepHandle(
         modifier = modifier
             .size(48.dp)
             .testTag(testTag)
-            .pointerInput(effectiveEnabled, effectiveCanMoveUp, effectiveCanMoveDown, onDragDelta) {
+            .pointerInput(
+                effectiveEnabled,
+                effectiveCanMoveUp,
+                effectiveCanMoveDown,
+                onDragStart,
+                onDragDelta,
+                onDragEnd
+            ) {
                 if (!effectiveEnabled) return@pointerInput
                 detectDragGestures(
                     onDragStart = {
@@ -68,9 +73,9 @@ fun DragStepHandle(
                     }
                 ) { change, dragAmount ->
                     change.consume()
-                    val customDrag = onDragDelta
-                    if (customDrag != null) {
-                        customDrag(dragAmount.y)
+                    val liveDrag = onDragDelta
+                    if (liveDrag != null) {
+                        liveDrag(dragAmount.y)
                     } else {
                         accumulatedDrag += dragAmount.y
                         if (abs(accumulatedDrag) >= stepThresholdPx) {

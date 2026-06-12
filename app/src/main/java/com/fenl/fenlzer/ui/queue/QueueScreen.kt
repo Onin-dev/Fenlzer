@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.LazyListItemInfo
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -50,8 +49,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -71,6 +70,7 @@ import com.fenl.fenlzer.playback.PlaybackUiState
 import com.fenl.fenlzer.ui.components.DragStepHandle
 import com.fenl.fenlzer.ui.theme.Dimensions
 import java.util.Locale
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 @Composable
@@ -98,31 +98,34 @@ fun QueueScreen(
 
     var initialCurrentScrollDone by remember { mutableStateOf(false) }
     var draggingQueueItemId by remember { mutableStateOf<String?>(null) }
-    var draggedIndex by remember { mutableIntStateOf(-1) }
+    var dragStartIndex by remember { mutableIntStateOf(-1) }
+    var dragTargetIndex by remember { mutableIntStateOf(-1) }
     var dragOffsetPx by remember { mutableFloatStateOf(0f) }
 
     val liveCurrentQueueItemId = playbackState.currentItem?.queueItemId
+    val baseVisibleItems = playbackState.queueItems.filterNot { it.queueItemId in pendingHiddenIds }
     val sourceIds = playbackState.queueItems.map { it.queueItemId }.toSet()
+    val rowHeightPx = with(density) { 72.dp.toPx() }
 
     LaunchedEffect(sourceIds.joinToString("|")) {
         pendingHiddenIds = pendingHiddenIds.intersect(sourceIds)
     }
 
-    val visibleItems = playbackState.queueItems.filterNot { it.queueItemId in pendingHiddenIds }
+    val visibleItems = remember(baseVisibleItems, draggingQueueItemId, dragStartIndex, dragTargetIndex) {
+        reorderPreviewItems(
+            items = baseVisibleItems,
+            draggingQueueItemId = draggingQueueItemId,
+            dragStartIndex = dragStartIndex,
+            dragTargetIndex = dragTargetIndex
+        )
+    }
     val currentVisibleIndex = visibleItems.indexOfFirst { it.queueItemId == liveCurrentQueueItemId }
-    val rowHeightPx = with(density) { 72.dp.toPx() }
 
     LaunchedEffect(visibleItems.size, liveCurrentQueueItemId) {
         if (!initialCurrentScrollDone && currentVisibleIndex >= 0) {
             listState.scrollToItem(currentVisibleIndex)
             initialCurrentScrollDone = true
         }
-    }
-
-    fun resetDrag() {
-        draggingQueueItemId = null
-        draggedIndex = -1
-        dragOffsetPx = 0f
     }
 
     fun requestUndoableRemoval(item: QueueTrackItem) {
@@ -143,29 +146,45 @@ fun QueueScreen(
         }
     }
 
-    fun handleDragStart(item: QueueTrackItem, index: Int) {
-        if (item.queueItemId == liveCurrentQueueItemId) return
-        draggingQueueItemId = item.queueItemId
-        draggedIndex = index
+    fun resetDrag(commit: Boolean) {
+        val itemId = draggingQueueItemId
+        val delta = dragTargetIndex - dragStartIndex
+        if (commit && itemId != null && dragStartIndex >= 0 && delta != 0) {
+            onMoveItem(itemId, delta)
+        }
+        draggingQueueItemId = null
+        dragStartIndex = -1
+        dragTargetIndex = -1
         dragOffsetPx = 0f
     }
 
-    fun handleDragDelta(item: QueueTrackItem, index: Int, deltaY: Float) {
-        if (draggingQueueItemId != item.queueItemId || item.queueItemId == liveCurrentQueueItemId) return
+    fun startDrag(item: QueueTrackItem) {
+        if (item.queueItemId == liveCurrentQueueItemId) return
+        val startIndex = baseVisibleItems.indexOfFirst { it.queueItemId == item.queueItemId }
+        if (startIndex == -1) return
+        draggingQueueItemId = item.queueItemId
+        dragStartIndex = startIndex
+        dragTargetIndex = startIndex
+        dragOffsetPx = 0f
+    }
+
+    fun dragBy(deltaY: Float) {
+        if (draggingQueueItemId == null || dragStartIndex == -1) return
 
         dragOffsetPx += deltaY
         maybeAutoScrollQueue(
             scope = scope,
             listState = listState,
-            draggedIndex = index,
+            dragTargetIndex = dragTargetIndex,
             deltaY = deltaY
         )
 
-        if (dragOffsetPx >= rowHeightPx && index < visibleItems.lastIndex) {
-            onMoveItem(item.queueItemId, 1)
+        while (dragOffsetPx >= rowHeightPx && dragTargetIndex < baseVisibleItems.lastIndex) {
+            dragTargetIndex += 1
             dragOffsetPx -= rowHeightPx
-        } else if (dragOffsetPx <= -rowHeightPx && index > 0) {
-            onMoveItem(item.queueItemId, -1)
+        }
+        while (dragOffsetPx <= -rowHeightPx && dragTargetIndex > 0) {
+            dragTargetIndex -= 1
             dragOffsetPx += rowHeightPx
         }
     }
@@ -230,7 +249,8 @@ fun QueueScreen(
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(vertical = 8.dp)
+                        contentPadding = PaddingValues(vertical = 8.dp),
+                        userScrollEnabled = draggingQueueItemId == null
                     ) {
                         itemsIndexed(
                             items = visibleItems,
@@ -241,6 +261,7 @@ fun QueueScreen(
                             QueueRow(
                                 item = item,
                                 isCurrent = isCurrent,
+                                isAnyQueueDragActive = draggingQueueItemId != null,
                                 isDragging = isDragging,
                                 dragOffsetPx = if (isDragging) dragOffsetPx else 0f,
                                 canMoveUp = !isCurrent && index > 0,
@@ -250,9 +271,10 @@ fun QueueScreen(
                                 onJumpToItem = onJumpToItem,
                                 onMoveUp = { onMoveItem(item.queueItemId, -1) },
                                 onMoveDown = { onMoveItem(item.queueItemId, 1) },
-                                onDragStart = { handleDragStart(item, index) },
-                                onDragDelta = { deltaY -> handleDragDelta(item, index, deltaY) },
-                                onDragEnd = ::resetDrag
+                                onDragStart = { startDrag(item) },
+                                onDragDelta = ::dragBy,
+                                onDragEnd = { resetDrag(commit = true) },
+                                onDragCancel = { resetDrag(commit = false) }
                             )
                         }
                     }
@@ -269,20 +291,37 @@ fun QueueScreen(
     }
 }
 
+private fun reorderPreviewItems(
+    items: List<QueueTrackItem>,
+    draggingQueueItemId: String?,
+    dragStartIndex: Int,
+    dragTargetIndex: Int
+): List<QueueTrackItem> {
+    if (draggingQueueItemId == null || dragStartIndex !in items.indices) return items
+    val currentIndex = items.indexOfFirst { it.queueItemId == draggingQueueItemId }
+    if (currentIndex == -1) return items
+    val targetIndex = dragTargetIndex.coerceIn(0, items.lastIndex)
+    if (currentIndex == targetIndex) return items
+    return items.toMutableList().apply {
+        val item = removeAt(currentIndex)
+        add(targetIndex, item)
+    }
+}
+
 private fun maybeAutoScrollQueue(
-    scope: kotlinx.coroutines.CoroutineScope,
+    scope: CoroutineScope,
     listState: LazyListState,
-    draggedIndex: Int,
+    dragTargetIndex: Int,
     deltaY: Float
 ) {
     val visibleInfo = listState.layoutInfo.visibleItemsInfo
     val firstVisible = visibleInfo.firstOrNull()?.index ?: return
     val lastVisible = visibleInfo.lastOrNull()?.index ?: return
-    val shouldScrollUp = deltaY < 0f && draggedIndex <= firstVisible + 1
-    val shouldScrollDown = deltaY > 0f && draggedIndex >= lastVisible - 1
+    val shouldScrollUp = deltaY < 0f && dragTargetIndex <= firstVisible + 1
+    val shouldScrollDown = deltaY > 0f && dragTargetIndex >= lastVisible - 1
     if (shouldScrollUp || shouldScrollDown) {
         scope.launch {
-            listState.scrollBy(deltaY * 1.65f)
+            listState.scrollBy(deltaY * 1.7f)
         }
     }
 }
@@ -419,6 +458,7 @@ private fun EmptyQueueState(modifier: Modifier = Modifier) {
 private fun QueueRow(
     item: QueueTrackItem,
     isCurrent: Boolean,
+    isAnyQueueDragActive: Boolean,
     isDragging: Boolean,
     dragOffsetPx: Float,
     canMoveUp: Boolean,
@@ -430,7 +470,8 @@ private fun QueueRow(
     onMoveDown: () -> Unit,
     onDragStart: () -> Unit,
     onDragDelta: (Float) -> Unit,
-    onDragEnd: () -> Unit
+    onDragEnd: () -> Unit,
+    onDragCancel: () -> Unit
 ) {
     var confirmCurrentRemoval by remember { mutableStateOf(false) }
 
@@ -476,6 +517,7 @@ private fun QueueRow(
 
     SwipeToDismissBox(
         state = dismissState,
+        enableDismissFromStartToEnd = !isAnyQueueDragActive,
         enableDismissFromEndToStart = false,
         backgroundContent = {
             Box(
@@ -562,10 +604,10 @@ private fun QueueRow(
             },
             trailingContent = {
                 DragStepHandle(
-                    canMoveUp = canMoveUp,
-                    canMoveDown = canMoveDown,
                     onMoveUp = onMoveUp,
                     onMoveDown = onMoveDown,
+                    canMoveUp = canMoveUp,
+                    canMoveDown = canMoveDown,
                     enabled = !isCurrent,
                     contentDescription = if (isCurrent) "Current song stays fixed" else "Reorder queue item",
                     onDragStart = onDragStart,
@@ -577,12 +619,12 @@ private fun QueueRow(
             modifier = Modifier
                 .graphicsLayer {
                     translationY = dragOffsetPx
-                    shadowElevation = if (isDragging) 12f else 0f
+                    shadowElevation = if (isDragging) 14f else 0f
                     scaleX = if (isDragging) 1.015f else 1f
                     scaleY = if (isDragging) 1.015f else 1f
                 }
                 .zIndex(if (isDragging) 1f else 0f)
-                .clickable { onJumpToItem(item.queueItemId) }
+                .clickable(enabled = !isAnyQueueDragActive) { onJumpToItem(item.queueItemId) }
         )
     }
 }
