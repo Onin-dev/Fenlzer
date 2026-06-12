@@ -19,12 +19,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 
-/**
- * Handle-only reorder affordance.
- *
- * Queue rows pass a live drag session through [onDragStart], [onDragDelta], and
- * [onDragEnd]. Playlist rows can keep using the one-step fallback callbacks.
- */
 @Composable
 fun DragStepHandle(
     onMoveUp: () -> Unit,

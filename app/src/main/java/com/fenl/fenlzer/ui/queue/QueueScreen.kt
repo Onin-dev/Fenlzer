@@ -2,6 +2,7 @@ package com.fenl.fenlzer.ui.queue
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListState
@@ -29,8 +31,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -41,7 +41,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
@@ -58,6 +57,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -70,6 +70,7 @@ import com.fenl.fenlzer.playback.PlaybackUiState
 import com.fenl.fenlzer.ui.components.DragStepHandle
 import com.fenl.fenlzer.ui.theme.Dimensions
 import java.util.Locale
+import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -90,9 +91,9 @@ fun QueueScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
-    val density = LocalDensity.current
+    val rowHeightPx = with(LocalDensity.current) { QueueRowHeight.toPx() }
 
-    var pendingHiddenIds by remember { mutableStateOf(emptySet<String>()) }
+    var pendingHiddenIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var saveDialogOpen by remember { mutableStateOf(false) }
     var savePlaylistName by remember { mutableStateOf("Saved queue") }
 
@@ -103,29 +104,34 @@ fun QueueScreen(
     var dragOffsetPx by remember { mutableFloatStateOf(0f) }
 
     val liveCurrentQueueItemId = playbackState.currentItem?.queueItemId
-    val baseVisibleItems = playbackState.queueItems.filterNot { it.queueItemId in pendingHiddenIds }
+    val visibleItems = playbackState.queueItems.filterNot { it.queueItemId in pendingHiddenIds }
     val sourceIds = playbackState.queueItems.map { it.queueItemId }.toSet()
-    val rowHeightPx = with(density) { 72.dp.toPx() }
+    val currentVisibleIndex = visibleItems.indexOfFirst { it.queueItemId == liveCurrentQueueItemId }
 
     LaunchedEffect(sourceIds.joinToString("|")) {
         pendingHiddenIds = pendingHiddenIds.intersect(sourceIds)
     }
-
-    val visibleItems = remember(baseVisibleItems, draggingQueueItemId, dragStartIndex, dragTargetIndex) {
-        reorderPreviewItems(
-            items = baseVisibleItems,
-            draggingQueueItemId = draggingQueueItemId,
-            dragStartIndex = dragStartIndex,
-            dragTargetIndex = dragTargetIndex
-        )
-    }
-    val currentVisibleIndex = visibleItems.indexOfFirst { it.queueItemId == liveCurrentQueueItemId }
 
     LaunchedEffect(visibleItems.size, liveCurrentQueueItemId) {
         if (!initialCurrentScrollDone && currentVisibleIndex >= 0) {
             listState.scrollToItem(currentVisibleIndex)
             initialCurrentScrollDone = true
         }
+    }
+
+    fun clearDrag(commit: Boolean) {
+        val itemId = draggingQueueItemId
+        val delta = dragTargetIndex - dragStartIndex
+        if (commit && itemId != null && delta != 0) {
+            val step = if (delta > 0) 1 else -1
+            repeat(abs(delta)) {
+                onMoveItem(itemId, step)
+            }
+        }
+        draggingQueueItemId = null
+        dragStartIndex = -1
+        dragTargetIndex = -1
+        dragOffsetPx = 0f
     }
 
     fun requestUndoableRemoval(item: QueueTrackItem) {
@@ -146,31 +152,18 @@ fun QueueScreen(
         }
     }
 
-    fun resetDrag(commit: Boolean) {
-        val itemId = draggingQueueItemId
-        val delta = dragTargetIndex - dragStartIndex
-        if (commit && itemId != null && dragStartIndex >= 0 && delta != 0) {
-            onMoveItem(itemId, delta)
-        }
-        draggingQueueItemId = null
-        dragStartIndex = -1
-        dragTargetIndex = -1
-        dragOffsetPx = 0f
-    }
-
     fun startDrag(item: QueueTrackItem) {
         if (item.queueItemId == liveCurrentQueueItemId) return
-        val startIndex = baseVisibleItems.indexOfFirst { it.queueItemId == item.queueItemId }
-        if (startIndex == -1) return
+        val index = visibleItems.indexOfFirst { it.queueItemId == item.queueItemId }
+        if (index < 0) return
         draggingQueueItemId = item.queueItemId
-        dragStartIndex = startIndex
-        dragTargetIndex = startIndex
+        dragStartIndex = index
+        dragTargetIndex = index
         dragOffsetPx = 0f
     }
 
     fun dragBy(deltaY: Float) {
-        if (draggingQueueItemId == null || dragStartIndex == -1) return
-
+        if (draggingQueueItemId == null || dragStartIndex < 0) return
         dragOffsetPx += deltaY
         maybeAutoScrollQueue(
             scope = scope,
@@ -178,14 +171,10 @@ fun QueueScreen(
             dragTargetIndex = dragTargetIndex,
             deltaY = deltaY
         )
-
-        while (dragOffsetPx >= rowHeightPx && dragTargetIndex < baseVisibleItems.lastIndex) {
-            dragTargetIndex += 1
-            dragOffsetPx -= rowHeightPx
-        }
-        while (dragOffsetPx <= -rowHeightPx && dragTargetIndex > 0) {
-            dragTargetIndex -= 1
-            dragOffsetPx += rowHeightPx
+        val rawTarget = (dragStartIndex + (dragOffsetPx / rowHeightPx).toInt())
+            .coerceIn(0, visibleItems.lastIndex)
+        if (rawTarget != dragTargetIndex) {
+            dragTargetIndex = rawTarget
         }
     }
 
@@ -261,20 +250,26 @@ fun QueueScreen(
                             QueueRow(
                                 item = item,
                                 isCurrent = isCurrent,
-                                isAnyQueueDragActive = draggingQueueItemId != null,
+                                isQueueDragActive = draggingQueueItemId != null,
                                 isDragging = isDragging,
-                                dragOffsetPx = if (isDragging) dragOffsetPx else 0f,
+                                visualOffsetPx = visualQueueRowOffsetPx(
+                                    index = index,
+                                    isDragging = isDragging,
+                                    dragOffsetPx = dragOffsetPx,
+                                    dragStartIndex = dragStartIndex,
+                                    dragTargetIndex = dragTargetIndex,
+                                    rowHeightPx = rowHeightPx
+                                ),
                                 canMoveUp = !isCurrent && index > 0,
                                 canMoveDown = !isCurrent && index < visibleItems.lastIndex,
-                                onRemoveItem = onRemoveItem,
                                 onRequestUndoableRemoval = ::requestUndoableRemoval,
                                 onJumpToItem = onJumpToItem,
+                                onRemoveCurrentItem = { onRemoveItem(item.queueItemId) },
                                 onMoveUp = { onMoveItem(item.queueItemId, -1) },
                                 onMoveDown = { onMoveItem(item.queueItemId, 1) },
                                 onDragStart = { startDrag(item) },
                                 onDragDelta = ::dragBy,
-                                onDragEnd = { resetDrag(commit = true) },
-                                onDragCancel = { resetDrag(commit = false) }
+                                onDragEnd = { clearDrag(commit = true) }
                             )
                         }
                     }
@@ -291,20 +286,23 @@ fun QueueScreen(
     }
 }
 
-private fun reorderPreviewItems(
-    items: List<QueueTrackItem>,
-    draggingQueueItemId: String?,
+private val QueueRowHeight = 72.dp
+
+private fun visualQueueRowOffsetPx(
+    index: Int,
+    isDragging: Boolean,
+    dragOffsetPx: Float,
     dragStartIndex: Int,
-    dragTargetIndex: Int
-): List<QueueTrackItem> {
-    if (draggingQueueItemId == null || dragStartIndex !in items.indices) return items
-    val currentIndex = items.indexOfFirst { it.queueItemId == draggingQueueItemId }
-    if (currentIndex == -1) return items
-    val targetIndex = dragTargetIndex.coerceIn(0, items.lastIndex)
-    if (currentIndex == targetIndex) return items
-    return items.toMutableList().apply {
-        val item = removeAt(currentIndex)
-        add(targetIndex, item)
+    dragTargetIndex: Int,
+    rowHeightPx: Float
+): Float {
+    if (dragStartIndex < 0 || dragTargetIndex < 0) return 0f
+    if (isDragging) return dragOffsetPx
+
+    return when {
+        dragTargetIndex > dragStartIndex && index in (dragStartIndex + 1)..dragTargetIndex -> -rowHeightPx
+        dragTargetIndex < dragStartIndex && index in dragTargetIndex until dragStartIndex -> rowHeightPx
+        else -> 0f
     }
 }
 
@@ -453,44 +451,28 @@ private fun EmptyQueueState(modifier: Modifier = Modifier) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun QueueRow(
     item: QueueTrackItem,
     isCurrent: Boolean,
-    isAnyQueueDragActive: Boolean,
+    isQueueDragActive: Boolean,
     isDragging: Boolean,
-    dragOffsetPx: Float,
+    visualOffsetPx: Float,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
-    onRemoveItem: (String) -> Unit,
     onRequestUndoableRemoval: (QueueTrackItem) -> Unit,
     onJumpToItem: (String) -> Unit,
+    onRemoveCurrentItem: () -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onDragStart: () -> Unit,
     onDragDelta: (Float) -> Unit,
-    onDragEnd: () -> Unit,
-    onDragCancel: () -> Unit
+    onDragEnd: () -> Unit
 ) {
     var confirmCurrentRemoval by remember { mutableStateOf(false) }
-
-    val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { value ->
-            when (value) {
-                SwipeToDismissBoxValue.StartToEnd -> {
-                    if (isCurrent) {
-                        confirmCurrentRemoval = true
-                    } else {
-                        onRequestUndoableRemoval(item)
-                    }
-                    false
-                }
-                SwipeToDismissBoxValue.EndToStart -> false
-                SwipeToDismissBoxValue.Settled -> false
-            }
-        }
-    )
+    var swipeOffsetX by remember(item.queueItemId) { mutableFloatStateOf(0f) }
+    val rowSwipeThreshold = with(LocalDensity.current) { 92.dp.toPx() }
+    val rowMaxSwipe = with(LocalDensity.current) { 132.dp.toPx() }
 
     if (confirmCurrentRemoval) {
         AlertDialog(
@@ -501,7 +483,7 @@ private fun QueueRow(
                 TextButton(
                     onClick = {
                         confirmCurrentRemoval = false
-                        onRemoveItem(item.queueItemId)
+                        onRemoveCurrentItem()
                     }
                 ) {
                     Text(text = "Remove")
@@ -515,14 +497,22 @@ private fun QueueRow(
         )
     }
 
-    SwipeToDismissBox(
-        state = dismissState,
-        enableDismissFromStartToEnd = !isAnyQueueDragActive,
-        enableDismissFromEndToStart = false,
-        backgroundContent = {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = QueueRowHeight)
+            .graphicsLayer {
+                translationY = visualOffsetPx
+                shadowElevation = if (isDragging) 16f else 0f
+                scaleX = if (isDragging) 1.015f else 1f
+                scaleY = if (isDragging) 1.015f else 1f
+            }
+            .zIndex(if (isDragging) 2f else 0f)
+    ) {
+        if (swipeOffsetX > 0f && !isQueueDragActive) {
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .matchParentSize()
                     .background(MaterialTheme.colorScheme.errorContainer)
                     .padding(horizontal = 20.dp),
                 contentAlignment = Alignment.CenterStart
@@ -534,98 +524,129 @@ private fun QueueRow(
                 )
             }
         }
-    ) {
-        val containerColor = if (isCurrent) {
-            MaterialTheme.colorScheme.primaryContainer
-        } else {
-            MaterialTheme.colorScheme.surface
-        }
-        val headlineColor = if (isCurrent) {
-            MaterialTheme.colorScheme.onPrimaryContainer
-        } else {
-            MaterialTheme.colorScheme.onSurface
-        }
-        val supportingColor = if (isCurrent) {
-            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f)
-        } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
-        }
 
-        ListItem(
-            headlineContent = {
-                Text(
-                    text = item.displayTitle,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                    color = headlineColor
-                )
-            },
-            supportingContent = {
-                Text(
-                    text = queueSubtitle(item),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = supportingColor
-                )
-            },
-            leadingContent = {
-                Box(
-                    modifier = Modifier
-                        .size(Dimensions.QUEUE_ITEM_THUMBNAIL)
-                        .clip(MaterialTheme.shapes.small)
-                        .background(
-                            if (isCurrent) {
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-                            } else {
-                                MaterialTheme.colorScheme.surfaceVariant
-                            }
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (item.thumbnailUri != null) {
-                        AsyncImage(
-                            model = item.thumbnailUri,
-                            contentDescription = null,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Rounded.MusicNote,
-                            contentDescription = null,
-                            tint = if (isCurrent) {
-                                MaterialTheme.colorScheme.onPrimaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            }
-                        )
-                    }
-                }
-            },
-            trailingContent = {
-                DragStepHandle(
-                    onMoveUp = onMoveUp,
-                    onMoveDown = onMoveDown,
-                    canMoveUp = canMoveUp,
-                    canMoveDown = canMoveDown,
-                    enabled = !isCurrent,
-                    contentDescription = if (isCurrent) "Current song stays fixed" else "Reorder queue item",
-                    onDragStart = onDragStart,
-                    onDragDelta = onDragDelta,
-                    onDragEnd = onDragEnd
-                )
-            },
-            colors = ListItemDefaults.colors(containerColor = containerColor),
+        Row(
             modifier = Modifier
-                .graphicsLayer {
-                    translationY = dragOffsetPx
-                    shadowElevation = if (isDragging) 14f else 0f
-                    scaleX = if (isDragging) 1.015f else 1f
-                    scaleY = if (isDragging) 1.015f else 1f
+                .fillMaxWidth()
+                .heightIn(min = QueueRowHeight)
+                .graphicsLayer { translationX = if (isQueueDragActive) 0f else swipeOffsetX }
+                .background(
+                    if (isCurrent) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    }
+                ),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = QueueRowHeight)
+                    .pointerInput(isQueueDragActive, item.queueItemId) {
+                        if (isQueueDragActive) return@pointerInput
+                        detectHorizontalDragGestures(
+                            onDragEnd = {
+                                if (swipeOffsetX >= rowSwipeThreshold) {
+                                    if (isCurrent) {
+                                        confirmCurrentRemoval = true
+                                    } else {
+                                        onRequestUndoableRemoval(item)
+                                    }
+                                }
+                                swipeOffsetX = 0f
+                            },
+                            onDragCancel = { swipeOffsetX = 0f }
+                        ) { change, dragAmount ->
+                            change.consume()
+                            swipeOffsetX = (swipeOffsetX + dragAmount).coerceIn(0f, rowMaxSwipe)
+                        }
+                    }
+                    .clickable(enabled = !isQueueDragActive) { onJumpToItem(item.queueItemId) }
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                QueueThumbnail(item = item, isCurrent = isCurrent)
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 12.dp),
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = item.displayTitle,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                        color = if (isCurrent) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = queueSubtitle(item),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = if (isCurrent) {
+                            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f)
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
                 }
-                .zIndex(if (isDragging) 1f else 0f)
-                .clickable(enabled = !isAnyQueueDragActive) { onJumpToItem(item.queueItemId) }
-        )
+            }
+
+            DragStepHandle(
+                onMoveUp = onMoveUp,
+                onMoveDown = onMoveDown,
+                canMoveUp = canMoveUp,
+                canMoveDown = canMoveDown,
+                enabled = !isCurrent,
+                contentDescription = if (isCurrent) "Current song stays fixed" else "Reorder queue item",
+                modifier = Modifier.padding(end = 8.dp),
+                onDragStart = {
+                    swipeOffsetX = 0f
+                    onDragStart()
+                },
+                onDragDelta = onDragDelta,
+                onDragEnd = onDragEnd
+            )
+        }
+    }
+}
+
+@Composable
+private fun QueueThumbnail(
+    item: QueueTrackItem,
+    isCurrent: Boolean
+) {
+    Box(
+        modifier = Modifier
+            .size(Dimensions.QUEUE_ITEM_THUMBNAIL)
+            .clip(MaterialTheme.shapes.small)
+            .background(
+                if (isCurrent) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                }
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        if (item.thumbnailUri != null) {
+            AsyncImage(
+                model = item.thumbnailUri,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Rounded.MusicNote,
+                contentDescription = null,
+                tint = if (isCurrent) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
+            )
+        }
     }
 }
 
