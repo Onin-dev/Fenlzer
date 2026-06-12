@@ -166,7 +166,7 @@ private fun FenlzerScaffold(
     val isKeyboardVisible = WindowInsets.ime.getBottom(density) > 0
     val isPlayerRoute = currentRoute == FenlzerRoute.Player.route
     val isDiagnosticsRoute = currentRoute in setOf(FenlzerRoute.Diagnostics.route, FenlzerRoute.Queue.route)
-    val hidesAppChrome = isPlayerRoute || isDiagnosticsRoute || isQueueRoute
+    val hidesAppChrome = isPlayerRoute || isDiagnosticsRoute || currentRoute == FenlzerRoute.Queue.route
     val hideTopBar =
         hidesAppChrome ||
             currentRoute == FenlzerRoute.Home.route ||
