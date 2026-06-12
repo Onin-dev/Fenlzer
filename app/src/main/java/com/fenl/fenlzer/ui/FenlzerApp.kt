@@ -91,7 +91,6 @@ fun FenlzerApp(
     appGraph: AppGraph,
     modifier: Modifier = Modifier
 ) {
-    val phase16Scope = rememberCoroutineScope()
     val navController = rememberNavController()
     val settings by appGraph.settingsRepository.settings.collectAsStateWithLifecycle()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -497,16 +496,16 @@ private fun FenlzerScaffold(
                         .widthIn(min = 360.dp, max = 440.dp)
                 ,
                     onMoveItem = { queueItemId, offset ->
-                        phase16Scope.launch { appGraph.queueRepository?.moveQueueItem(queueItemId, offset) }
+                        coroutineScope.launch { appGraph.queueRepository?.moveQueueItem(queueItemId, offset) }
                     },
                     onShuffleQueue = {
-                        phase16Scope.launch { appGraph.queueRepository?.shuffleQueue() }
+                        coroutineScope.launch { appGraph.queueRepository?.shuffleQueue() }
                     },
                     onShuffleUpcoming = {
-                        phase16Scope.launch { appGraph.queueRepository?.shuffleUpcoming() }
+                        coroutineScope.launch { appGraph.queueRepository?.shuffleUpcoming() }
                     },
                     onSaveQueueAsPlaylist = { name ->
-                        phase16Scope.launch {
+                        coroutineScope.launch {
                             val trackIds = playbackState.queueItems
                                 .filterNot { it.isRemote }
                                 .mapNotNull { it.localTrackId ?: it.trackId }
@@ -1075,16 +1074,16 @@ private fun FenlzerNavHost(
                 }
             ,
                 onMoveItem = { queueItemId, offset ->
-                    phase16Scope.launch { appGraph.queueRepository?.moveQueueItem(queueItemId, offset) }
+                    coroutineScope.launch { appGraph.queueRepository?.moveQueueItem(queueItemId, offset) }
                 },
                 onShuffleQueue = {
-                    phase16Scope.launch { appGraph.queueRepository?.shuffleQueue() }
+                    coroutineScope.launch { appGraph.queueRepository?.shuffleQueue() }
                 },
                 onShuffleUpcoming = {
-                    phase16Scope.launch { appGraph.queueRepository?.shuffleUpcoming() }
+                    coroutineScope.launch { appGraph.queueRepository?.shuffleUpcoming() }
                 },
                 onSaveQueueAsPlaylist = { name ->
-                    phase16Scope.launch {
+                    coroutineScope.launch {
                         val trackIds = playbackState.queueItems
                             .filterNot { it.isRemote }
                             .mapNotNull { it.localTrackId ?: it.trackId }
