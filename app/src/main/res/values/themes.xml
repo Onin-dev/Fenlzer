@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-
     <style name="Theme.Fenlzer" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!-- Pre-Android 12 fallback launch theme. -->
+    <style name="Theme.Fenlzer.Splash" parent="@style/Theme.Fenlzer">
+        <item name="android:windowBackground">@color/splash_background</item>
+        <item name="android:statusBarColor">@color/splash_background</item>
+        <item name="android:navigationBarColor">@color/splash_background</item>
+    </style>
 </resources>

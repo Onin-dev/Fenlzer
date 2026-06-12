@@ -1,9 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Fenlzer.Splash" parent="@style/Theme.Fenlzer">
-        <item name="android:windowSplashScreenBackground">@color/splash_background</item>
-        <item name="android:windowBackground">@color/splash_background</item>
-        <item name="android:statusBarColor">@color/splash_background</item>
-        <item name="android:navigationBarColor">@color/splash_background</item>
-    </style>
+    <!-- Intentionally empty. Theme.Fenlzer.Splash is defined in values-v31/themes.xml only. -->
 </resources>
