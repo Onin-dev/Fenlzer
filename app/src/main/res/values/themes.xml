@@ -2,6 +2,5 @@
 <resources>
 
     <style name="Theme.Fenlzer" parent="android:Theme.Material.Light.NoActionBar" />
-        <item name="windowSplashScreenBackground">@color/splash_background</item>
         <item name="android:windowBackground">@color/splash_background</item>
 </resources>
