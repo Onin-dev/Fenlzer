@@ -1126,13 +1126,6 @@ private fun TrackRow(
     }
 
     ListItem(
-        colors = ListItemDefaults.colors(
-            containerColor = if (selected) {
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.70f)
-            } else {
-                MaterialTheme.colorScheme.surface
-            }
-        ),
         headlineContent = {
             Text(
                 text = track.displayTitle,
@@ -1141,7 +1134,12 @@ private fun TrackRow(
             )
         },
         supportingContent = {
-            TrackArtistDurationLine(track = track)
+            Text(
+                text = track.artist,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         },
         leadingContent = {
             TrackArtwork(track = track)
@@ -1252,33 +1250,6 @@ private fun TrackRow(
             )
     )
 }
-
-
-@Composable
-private fun TrackArtistDurationLine(track: LibraryTrack) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = track.artist,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f)
-        )
-        Text(
-            text = track.durationMs.formatDuration(),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            modifier = Modifier.padding(start = 10.dp)
-        )
-    }
-}
-
-
 
 @Composable
 private fun TrackArtwork(track: LibraryTrack) {

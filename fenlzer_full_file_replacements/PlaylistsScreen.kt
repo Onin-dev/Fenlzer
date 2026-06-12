@@ -104,7 +104,6 @@ import java.util.Date
 import java.util.Locale
 import com.fenl.fenlzer.ui.components.DragStepHandle
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.style.TextAlign
 
 @Composable
 fun PlaylistsScreen(
@@ -1856,33 +1855,3 @@ private fun Long.formatDuration(): String {
         String.format(Locale.US, "%d:%02d", minutes, seconds)
     }
 }
-
-
-private fun Set<String>.toggle(value: String): Set<String> =
-    if (value in this) {
-        this - value
-    } else {
-        this + value
-    }
-
-
-@Composable
-private fun EmptyListMessage(
-    text: String,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 28.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center
-        )
-    }
-}
-
