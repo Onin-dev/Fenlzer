@@ -113,9 +113,9 @@ class YoutubeImportRepository(
                 )
             }
 
-            apiRepository.searchYoutube(query = trimmedQuery, limit = 5)
+            apiRepository.searchYoutube(query = trimmedQuery, limit = if (trimmedQuery.isLikelyYoutubeUrl()) 1 else 5)
                 .results
-                .take(5)
+                .take(if (trimmedQuery.isLikelyYoutubeUrl()) 1 else 5)
                 .map { it.toImportItem() }
         }
 
@@ -1521,3 +1521,14 @@ object YoutubeTransferRules {
             ?: "m4a"
     }
 }
+
+
+private fun String.isLikelyYoutubeUrl(): Boolean {
+    val value = trim().lowercase(Locale.US)
+    return value.startsWith("http://") ||
+        value.startsWith("https://") ||
+        value.contains("youtube.com/watch") ||
+        value.contains("youtu.be/") ||
+        value.contains("music.youtube.com/")
+}
+
