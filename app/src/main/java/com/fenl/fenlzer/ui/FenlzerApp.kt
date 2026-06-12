@@ -108,7 +108,7 @@ fun FenlzerApp(
         }
     }
 
-    if (isLandscape && currentRoute !in setOf(FenlzerRoute.Player, FenlzerRoute.Queue).route) {
+    if (isLandscape && currentRoute !in setOf(FenlzerRoute.Player.route, FenlzerRoute.Queue.route)) {
         Row(modifier = modifier.fillMaxSize()) {
             FenlzerNavigationRail(
                 currentRoute = currentRoute,
@@ -165,8 +165,8 @@ private fun FenlzerScaffold(
     val density = LocalDensity.current
     val isKeyboardVisible = WindowInsets.ime.getBottom(density) > 0
     val isPlayerRoute = currentRoute == FenlzerRoute.Player.route
-    val isDiagnosticsRoute = currentRoute in setOf(FenlzerRoute.Diagnostics, FenlzerRoute.Queue).route
-    val hidesAppChrome = isPlayerRoute || isDiagnosticsRoute
+    val isDiagnosticsRoute = currentRoute in setOf(FenlzerRoute.Diagnostics.route, FenlzerRoute.Queue.route)
+    val hidesAppChrome = isPlayerRoute || isDiagnosticsRoute || isQueueRoute
     val hideTopBar =
         hidesAppChrome ||
             currentRoute == FenlzerRoute.Home.route ||
@@ -1302,7 +1302,7 @@ private fun FenlzerTopBar(
     val isSettings = currentRoute == FenlzerRoute.Settings.route
     val isQueue = currentRoute == FenlzerRoute.Queue.route
     val isStatistics = currentRoute == FenlzerRoute.Statistics.route
-    val isDiagnostics = currentRoute in setOf(FenlzerRoute.Diagnostics, FenlzerRoute.Queue).route
+    val isDiagnostics = currentRoute in setOf(FenlzerRoute.Diagnostics.route, FenlzerRoute.Queue.route)
     val title = when (currentRoute) {
         FenlzerRoute.Playlists.route -> FenlzerRoute.Playlists.label
         FenlzerRoute.Import.route -> FenlzerRoute.Import.label
