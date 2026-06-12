@@ -27,56 +27,66 @@ import kotlin.math.abs
 /**
  * Reliable manual reorder control used by queue and playlist rows.
  *
- * It supports both drag gestures on the handle and explicit up/down buttons.
- * The buttons are intentionally kept because they make the feature testable,
- * accessible, and reliable across Compose/gesture versions.
+ * The component intentionally supports both:
+ * - explicit up/down buttons, which are reliable and testable;
+ * - vertical drag gestures on the center handle, which match the visual affordance.
+ *
+ * It is backward-compatible with older call sites that only pass [enabled],
+ * [onMoveUp], [onMoveDown], and [testTag]. Those call sites compile because
+ * [canMoveUp] and [canMoveDown] default to [enabled]. Newer call sites should
+ * pass precise move bounds so first/last rows disable the correct arrow.
  */
 @Composable
 fun DragStepHandle(
-    canMoveUp: Boolean,
-    canMoveDown: Boolean,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     modifier: Modifier = Modifier,
-    enabled: Boolean = canMoveUp || canMoveDown,
-    contentDescription: String = "Reorder"
+    enabled: Boolean = true,
+    canMoveUp: Boolean = enabled,
+    canMoveDown: Boolean = enabled,
+    contentDescription: String = "Reorder",
+    testTag: String = "dragStepHandle"
 ) {
     var accumulatedDrag by remember { mutableFloatStateOf(0f) }
     val stepThresholdPx = 34f
+    val effectiveCanMoveUp = enabled && canMoveUp
+    val effectiveCanMoveDown = enabled && canMoveDown
+    val effectiveEnabled = effectiveCanMoveUp || effectiveCanMoveDown
 
     Row(
-        modifier = modifier.testTag("dragStepHandle"),
+        modifier = modifier.testTag(testTag),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(0.dp)
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             IconButton(
                 onClick = onMoveUp,
-                enabled = enabled && canMoveUp,
+                enabled = effectiveCanMoveUp,
                 modifier = Modifier.size(32.dp)
             ) {
                 Icon(
                     imageVector = Icons.Rounded.KeyboardArrowUp,
                     contentDescription = "$contentDescription up",
-                    tint = if (enabled && canMoveUp) {
+                    tint = if (effectiveCanMoveUp) {
                         MaterialTheme.colorScheme.onSurfaceVariant
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
                     }
                 )
             }
+
             Icon(
                 imageVector = Icons.Rounded.DragHandle,
                 contentDescription = contentDescription,
-                tint = if (enabled) {
+                tint = if (effectiveEnabled) {
                     MaterialTheme.colorScheme.onSurfaceVariant
                 } else {
                     MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
                 },
                 modifier = Modifier
                     .size(28.dp)
-                    .pointerInput(enabled, canMoveUp, canMoveDown) {
-                        if (!enabled) return@pointerInput
+                    .pointerInput(effectiveEnabled, effectiveCanMoveUp, effectiveCanMoveDown) {
+                        if (!effectiveEnabled) return@pointerInput
                         detectDragGestures(
                             onDragStart = { accumulatedDrag = 0f },
                             onDragEnd = { accumulatedDrag = 0f },
@@ -85,9 +95,9 @@ fun DragStepHandle(
                             change.consume()
                             accumulatedDrag += dragAmount.y
                             if (abs(accumulatedDrag) >= stepThresholdPx) {
-                                if (accumulatedDrag < 0 && canMoveUp) {
+                                if (accumulatedDrag < 0 && effectiveCanMoveUp) {
                                     onMoveUp()
-                                } else if (accumulatedDrag > 0 && canMoveDown) {
+                                } else if (accumulatedDrag > 0 && effectiveCanMoveDown) {
                                     onMoveDown()
                                 }
                                 accumulatedDrag = 0f
@@ -95,15 +105,16 @@ fun DragStepHandle(
                         }
                     }
             )
+
             IconButton(
                 onClick = onMoveDown,
-                enabled = enabled && canMoveDown,
+                enabled = effectiveCanMoveDown,
                 modifier = Modifier.size(32.dp)
             ) {
                 Icon(
                     imageVector = Icons.Rounded.KeyboardArrowDown,
                     contentDescription = "$contentDescription down",
-                    tint = if (enabled && canMoveDown) {
+                    tint = if (effectiveCanMoveDown) {
                         MaterialTheme.colorScheme.onSurfaceVariant
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)

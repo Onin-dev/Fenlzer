@@ -395,10 +395,10 @@ private fun QueueRow(
             },
             trailingContent = {
                 DragStepHandle(
-                    canMoveUp = canMoveUp,
-                    canMoveDown = canMoveDown,
-                    onMoveUp = onMoveUp,
-                    onMoveDown = onMoveDown,
+            onMoveUp = onMoveUp,
+            onMoveDown = onMoveDown,
+            canMoveUp = canMoveUp,
+            canMoveDown = canMoveDown,
                     enabled = !isCurrent,
                     contentDescription = if (isCurrent) "Current song stays fixed" else "Reorder queue item"
                 )
