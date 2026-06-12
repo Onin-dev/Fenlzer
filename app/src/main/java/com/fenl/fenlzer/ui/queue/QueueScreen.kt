@@ -109,6 +109,8 @@ fun QueueScreen(
     val allSourceIdSet = allSourceIds.toSet()
     val liveCurrentQueueItemId = playbackState.currentItem?.queueItemId
 
+    // Keep rows hidden after swipe until either Undo restores them or the source
+    // queue really no longer contains them. Do not compare against filtered IDs.
     LaunchedEffect(allSourceIds.joinToString("|")) {
         pendingHiddenIds = pendingHiddenIds.intersect(allSourceIdSet)
     }
@@ -127,6 +129,8 @@ fun QueueScreen(
         }
     }
 
+    // Stable display order. During drag, do NOT physically reorder this list:
+    // only use row translations. This prevents top/bottom disappearances/gaps.
     val visibleItems = remember(sourceItems, pendingOrderIds) {
         val pending = pendingOrderIds
         if (pending != null && pending.toSet() == sourceIdSet) {
@@ -397,8 +401,8 @@ private fun autoScrollQueueIfNeeded(
     val distanceToBottom = layoutInfo.viewportEndOffset - draggedBottom
 
     val direction = when {
-        canScrollUp && deltaY < 0f && (distanceToTop < thresholdPx || dragTargetIndex <= firstVisible.index + 1) -> -1f
-        canScrollDown && deltaY > 0f && (distanceToBottom < thresholdPx || dragTargetIndex >= lastVisible.index - 1) -> 1f
+        canScrollUp && deltaY < 0f && dragTargetIndex > 0 && (distanceToTop < thresholdPx || dragTargetIndex <= firstVisible.index + 1) -> -1f
+        canScrollDown && deltaY > 0f && dragTargetIndex < lastVisible.index && (distanceToBottom < thresholdPx || dragTargetIndex >= lastVisible.index - 1) -> 1f
         else -> 0f
     }
 

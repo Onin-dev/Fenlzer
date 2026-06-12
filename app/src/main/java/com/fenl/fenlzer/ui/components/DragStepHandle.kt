@@ -44,7 +44,6 @@ fun DragStepHandle(
     val latestOnDragEnd by rememberUpdatedState(onDragEnd)
     val latestCanMoveUp by rememberUpdatedState(enabled && canMoveUp)
     val latestCanMoveDown by rememberUpdatedState(enabled && canMoveDown)
-
     val visualEnabled = enabled && (canMoveUp || canMoveDown)
 
     Box(
