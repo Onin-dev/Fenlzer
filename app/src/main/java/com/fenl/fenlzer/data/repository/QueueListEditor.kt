@@ -1,6 +1,7 @@
 package com.fenl.fenlzer.data.repository
 
 import com.fenl.fenlzer.data.local.entity.QueueItemEntity
+import kotlin.random.Random
 
 object QueueListEditor {
     const val STATE_PREVIOUS = "PREVIOUS"
@@ -181,6 +182,120 @@ object QueueListEditor {
             currentQueueItemId = currentQueueItemId,
             changed = true,
             message = null
+        )
+    }
+
+
+    fun moveItem(
+        existingItems: List<QueueItemEntity>,
+        currentQueueItemId: String?,
+        queueItemIdToMove: String,
+        offset: Int
+    ): EditedQueue {
+        val sorted = existingItems.sortedBy { it.position }
+        if (offset == 0 || sorted.size < 2) {
+            return EditedQueue(
+                items = renumber(sorted, currentQueueItemId),
+                currentQueueItemId = currentQueueItemId,
+                changed = false,
+                message = null
+            )
+        }
+        val fromIndex = sorted.indexOfFirst { it.queueItemId == queueItemIdToMove }
+        if (fromIndex == -1) {
+            return EditedQueue(
+                items = renumber(sorted, currentQueueItemId),
+                currentQueueItemId = currentQueueItemId,
+                changed = false,
+                message = null
+            )
+        }
+        if (queueItemIdToMove == currentQueueItemId) {
+            return EditedQueue(
+                items = renumber(sorted, currentQueueItemId),
+                currentQueueItemId = currentQueueItemId,
+                changed = false,
+                message = "Current song stays fixed"
+            )
+        }
+
+        val mutable = sorted.toMutableList()
+        val moved = mutable.removeAt(fromIndex)
+        val currentIndexAfterRemoval = mutable.indexOfFirst { it.queueItemId == currentQueueItemId }
+        var targetIndex = (fromIndex + offset).coerceIn(0, mutable.size)
+
+        // The current song itself is never moved. If a drag step targets the
+        // current row, place the moved row on the other side of it instead.
+        if (currentIndexAfterRemoval != -1 && targetIndex == currentIndexAfterRemoval) {
+            targetIndex = if (fromIndex < sorted.indexOfFirst { it.queueItemId == currentQueueItemId }) {
+                (currentIndexAfterRemoval + 1).coerceAtMost(mutable.size)
+            } else {
+                (currentIndexAfterRemoval - 1).coerceAtLeast(0)
+            }
+        }
+
+        mutable.add(targetIndex, moved)
+        return EditedQueue(
+            items = renumber(mutable, currentQueueItemId),
+            currentQueueItemId = currentQueueItemId,
+            changed = true,
+            message = null
+        )
+    }
+
+    fun shuffleEntireQueue(
+        existingItems: List<QueueItemEntity>,
+        currentQueueItemId: String?,
+        random: Random = Random.Default
+    ): EditedQueue {
+        val sorted = existingItems.sortedBy { it.position }
+        if (sorted.size < 2 || currentQueueItemId == null) {
+            return EditedQueue(
+                items = renumber(sorted, currentQueueItemId),
+                currentQueueItemId = currentQueueItemId,
+                changed = false,
+                message = null
+            )
+        }
+        val current = sorted.firstOrNull { it.queueItemId == currentQueueItemId }
+            ?: return EditedQueue(renumber(sorted, currentQueueItemId), currentQueueItemId, false, null)
+        val shuffled = sorted
+            .filterNot { it.queueItemId == currentQueueItemId }
+            .shuffled(random)
+            .toMutableList()
+        val currentIndex = sorted.indexOfFirst { it.queueItemId == currentQueueItemId }
+            .coerceIn(0, shuffled.size)
+        shuffled.add(currentIndex, current)
+        return EditedQueue(
+            items = renumber(shuffled, currentQueueItemId),
+            currentQueueItemId = currentQueueItemId,
+            changed = true,
+            message = "Queue shuffled"
+        )
+    }
+
+    fun shuffleUpcoming(
+        existingItems: List<QueueItemEntity>,
+        currentQueueItemId: String?,
+        random: Random = Random.Default
+    ): EditedQueue {
+        val sorted = existingItems.sortedBy { it.position }
+        val currentIndex = sorted.indexOfFirst { it.queueItemId == currentQueueItemId }
+        if (currentIndex == -1 || currentIndex >= sorted.lastIndex) {
+            return EditedQueue(
+                items = renumber(sorted, currentQueueItemId),
+                currentQueueItemId = currentQueueItemId,
+                changed = false,
+                message = "No upcoming songs to shuffle"
+            )
+        }
+        val beforeAndCurrent = sorted.take(currentIndex + 1)
+        val shuffledUpcoming = sorted.drop(currentIndex + 1).shuffled(random)
+        return EditedQueue(
+            items = renumber(beforeAndCurrent + shuffledUpcoming, currentQueueItemId),
+            currentQueueItemId = currentQueueItemId,
+            changed = true,
+            message = "Upcoming songs shuffled"
         )
     }
 

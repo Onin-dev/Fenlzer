@@ -319,6 +319,28 @@ class PlaybackController(
         updateSleepTimerState()
     }
 
+
+    fun moveQueueItem(queueItemId: String, offset: Int) {
+        scope.launch {
+            val result = queueRepository.moveQueueItem(queueItemId, offset)
+            applyQueueResult(result, playWhenReady = false)
+        }
+    }
+
+    fun shuffleQueue() {
+        scope.launch {
+            val result = queueRepository.shuffleQueue()
+            applyQueueResult(result, playWhenReady = false)
+        }
+    }
+
+    fun shuffleUpcoming() {
+        scope.launch {
+            val result = queueRepository.shuffleUpcoming()
+            applyQueueResult(result, playWhenReady = false)
+        }
+    }
+
     fun clearUpcoming() {
         scope.launch {
             val result = queueRepository.clearUpcoming()

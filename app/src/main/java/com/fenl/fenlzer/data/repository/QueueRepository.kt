@@ -249,6 +249,62 @@ class QueueRepository(
         replaceQueue(updatedState, edited.items, edited.message)
     }
 
+
+    suspend fun moveQueueItem(queueItemId: String, offset: Int): QueueCommandResult = withContext(dispatchers.io) {
+        val state = queueDao.getQueueState() ?: defaultQueueState()
+        val edited = QueueListEditor.moveItem(
+            existingItems = queueDao.getQueueItems(),
+            currentQueueItemId = state.currentQueueItemId,
+            queueItemIdToMove = queueItemId,
+            offset = offset
+        )
+        val updatedState = state.copy(
+            sourceType = "QUEUE",
+            sourceId = null,
+            sourceLabel = modifiedSourceLabel(state.sourceLabel),
+            isModified = state.isModified || edited.changed,
+            currentQueueItemId = edited.currentQueueItemId,
+            updatedAt = now()
+        )
+        replaceQueue(updatedState, edited.items, edited.message)
+    }
+
+    suspend fun shuffleQueue(): QueueCommandResult = withContext(dispatchers.io) {
+        val state = queueDao.getQueueState() ?: defaultQueueState()
+        val edited = QueueListEditor.shuffleEntireQueue(
+            existingItems = queueDao.getQueueItems(),
+            currentQueueItemId = state.currentQueueItemId
+        )
+        val updatedState = state.copy(
+            sourceType = "QUEUE",
+            sourceId = null,
+            sourceLabel = modifiedSourceLabel(state.sourceLabel),
+            isModified = state.isModified || edited.changed,
+            shuffleEnabled = true,
+            currentQueueItemId = edited.currentQueueItemId,
+            updatedAt = now()
+        )
+        replaceQueue(updatedState, edited.items, edited.message)
+    }
+
+    suspend fun shuffleUpcoming(): QueueCommandResult = withContext(dispatchers.io) {
+        val state = queueDao.getQueueState() ?: defaultQueueState()
+        val edited = QueueListEditor.shuffleUpcoming(
+            existingItems = queueDao.getQueueItems(),
+            currentQueueItemId = state.currentQueueItemId
+        )
+        val updatedState = state.copy(
+            sourceType = "QUEUE",
+            sourceId = null,
+            sourceLabel = modifiedSourceLabel(state.sourceLabel),
+            isModified = state.isModified || edited.changed,
+            shuffleEnabled = true,
+            currentQueueItemId = edited.currentQueueItemId,
+            updatedAt = now()
+        )
+        replaceQueue(updatedState, edited.items, edited.message)
+    }
+
     suspend fun markModifiedIfContainsTrack(trackId: String): Boolean = withContext(dispatchers.io) {
         val state = queueDao.getQueueState() ?: return@withContext false
         val items = queueDao.getQueueItems()
@@ -304,6 +360,10 @@ class QueueRepository(
         )
         replaceQueue(updatedState, edited.items, null)
     }
+
+
+    private fun modifiedSourceLabel(sourceLabel: String): String =
+        if (sourceLabel.endsWith("Modified")) sourceLabel else "$sourceLabel - Modified"
 
     private suspend fun replaceQueue(
         state: QueueStateEntity,

@@ -102,6 +102,7 @@ import com.fenl.fenlzer.domain.text.SearchNormalizer
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
+import com.fenl.fenlzer.ui.components.DragStepHandle
 
 @Composable
 fun PlaylistsScreen(
@@ -1046,6 +1047,7 @@ private fun PlaylistSearchAndSortRow(
     }
 }
 
+
 @Composable
 private fun PlaylistTrackList(
     tracks: List<PlaylistTrackItem>,
@@ -1063,50 +1065,202 @@ private fun PlaylistTrackList(
     modifier: Modifier = Modifier
 ) {
     if (tracks.isEmpty()) {
-        Box(
-            modifier = modifier.fillMaxWidth(),
-            contentAlignment = Alignment.Center
+        Surface(
+            tonalElevation = 1.dp,
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            modifier = modifier.fillMaxWidth()
         ) {
-            Text(
-                text = emptyText,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Column(
+                modifier = Modifier.padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = emptyText,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Change the search or sort options, or add songs to this playlist.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
         return
     }
 
+    val sourceIndexByTrackId = remember(sourceTracks) {
+        sourceTracks.mapIndexed { index, track -> track.trackId to index }.toMap()
+    }
+
     LazyColumn(
-        modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(bottom = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+        modifier = modifier.testTag("playlistTrackList"),
+        contentPadding = PaddingValues(bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        items(tracks, key = { it.trackId }) { track ->
-            val sourceIndex = sourceTracks.indexOfFirst { it.trackId == track.trackId }
+        items(
+            items = tracks,
+            key = { it.trackId }
+        ) { track ->
+            val sourceIndex = sourceIndexByTrackId[track.trackId] ?: -1
+            val canMoveUp = canReorder && sourceIndex > 0
+            val canMoveDown = canReorder && sourceIndex != -1 && sourceIndex < sourceTracks.lastIndex
             PlaylistTrackRow(
                 track = track,
                 canReorder = canReorder,
-                canMoveUp = sourceIndex > 0,
-                canMoveDown = sourceIndex in 0 until sourceTracks.lastIndex,
+                canMoveUp = canMoveUp,
+                canMoveDown = canMoveDown,
                 showRemove = showRemove,
                 onClick = { onTrackClick(track) },
-                onMoveUp = { onMove(track.trackId, -1) },
-                onMoveDown = { onMove(track.trackId, 1) },
-                onRemove = { onRemove(track.trackId) },
-                onPlayNext = { onPlayNext(track.trackId) },
-                onAddToQueue = { onAddToQueue(track.trackId) },
-                onToggleFavourite = {
-                    onToggleFavourite(track.trackId, !track.isFavourite)
-                },
-                onAddToPlaylist = {
-                    onAddToPlaylist(track.trackId, track.displayTitle)
-                }
+                onMove = onMove,
+                onRemove = onRemove,
+                onPlayNext = onPlayNext,
+                onAddToQueue = onAddToQueue,
+                onToggleFavourite = onToggleFavourite,
+                onAddToPlaylist = onAddToPlaylist
             )
         }
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun PlaylistTrackRow(
+    track: PlaylistTrackItem,
+    canReorder: Boolean,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    showRemove: Boolean,
+    onClick: () -> Unit,
+    onMove: (String, Int) -> Unit,
+    onRemove: (String) -> Unit,
+    onPlayNext: (String) -> Unit,
+    onAddToQueue: (String) -> Unit,
+    onToggleFavourite: (String, Boolean) -> Unit,
+    onAddToPlaylist: (String, String) -> Unit
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    Surface(
+        tonalElevation = 1.dp,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        ListItem(
+            headlineContent = {
+                Text(
+                    text = track.displayTitle,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontWeight = FontWeight.SemiBold
+                )
+            },
+            supportingContent = {
+                Text(
+                    text = track.artist.ifBlank { "Unknown artist" },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            leadingContent = {
+                Box(
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (track.thumbnailUri != null) {
+                        AsyncImage(
+                            model = track.thumbnailUri,
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Rounded.MusicNote,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
+            trailingContent = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DragStepHandle(
+                        enabled = canReorder && (canMoveUp || canMoveDown),
+                        contentDescription = if (canReorder) "Drag to reorder playlist song" else "Reorder disabled while searching or sorting",
+                        testTag = "playlistDragHandle_${track.trackId}",
+                        onMoveUp = { if (canMoveUp) onMove(track.trackId, -1) },
+                        onMoveDown = { if (canMoveDown) onMove(track.trackId, 1) }
+                    )
+                    Box {
+                        IconButton(onClick = { menuExpanded = true }) {
+                            Icon(imageVector = Icons.Rounded.MoreVert, contentDescription = "Track actions")
+                        }
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(text = "Play Next") },
+                                leadingIcon = { Icon(imageVector = Icons.Rounded.Queue, contentDescription = null) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onPlayNext(track.trackId)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(text = "Add to Queue") },
+                                leadingIcon = { Icon(imageVector = Icons.Rounded.Queue, contentDescription = null) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onAddToQueue(track.trackId)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(text = if (track.isFavourite) "Remove Favourite" else "Favourite") },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = if (track.isFavourite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                        contentDescription = null
+                                    )
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    onToggleFavourite(track.trackId, !track.isFavourite)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(text = "Add to Playlist") },
+                                leadingIcon = { Icon(imageVector = Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onAddToPlaylist(track.trackId, track.displayTitle)
+                                }
+                            )
+                            if (showRemove) {
+                                DropdownMenuItem(
+                                    text = { Text(text = "Remove from Playlist") },
+                                    leadingIcon = { Icon(imageVector = Icons.Rounded.Delete, contentDescription = null) },
+                                    onClick = {
+                                        menuExpanded = false
+                                        onRemove(track.trackId)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+        )
+    }
+}
+
+
 @Composable
 private fun PlaylistTrackRow(
     track: PlaylistTrackItem,
