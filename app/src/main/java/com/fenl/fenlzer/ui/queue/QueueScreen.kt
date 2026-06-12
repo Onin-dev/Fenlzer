@@ -45,7 +45,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -122,15 +121,13 @@ fun QueueScreen(
         }
     }
 
-    val baseItems by remember(sourceItems, pendingOrderIds) {
-        derivedStateOf {
-            val pending = pendingOrderIds
-            if (pending != null && pending.toSet() == sourceIdSet) {
-                val byId = sourceItems.associateBy { it.queueItemId }
-                pending.mapNotNull(byId::get)
-            } else {
-                sourceItems
-            }
+    val baseItems = remember(sourceItems, pendingOrderIds) {
+        val pending = pendingOrderIds
+        if (pending != null && pending.toSet() == sourceIdSet) {
+            val byId = sourceItems.associateBy { it.queueItemId }
+            pending.mapNotNull(byId::get)
+        } else {
+            sourceItems
         }
     }
 
@@ -139,6 +136,7 @@ fun QueueScreen(
         draggingQueueItemId = draggingQueueItemId,
         targetIndex = dragTargetIndex
     )
+
     val currentVisibleIndex = visibleItems.indexOfFirst { it.queueItemId == liveCurrentQueueItemId }
 
     LaunchedEffect(visibleItems.size, liveCurrentQueueItemId) {
@@ -198,20 +196,25 @@ fun QueueScreen(
     }
 
     fun dragBy(deltaY: Float) {
-        if (draggingQueueItemId == null || dragStartIndex !in baseItems.indices) return
-        dragOffsetPx += deltaY
-        maybeAutoScrollQueue(
-            scope = scope,
-            listState = listState,
-            dragTargetIndex = dragTargetIndex,
-            deltaY = deltaY
-        )
+        if (draggingQueueItemId == null || dragStartIndex !in baseItems.indices || baseItems.isEmpty()) return
+
+        val maxUp = -dragStartIndex * rowHeightPx
+        val maxDown = (baseItems.lastIndex - dragStartIndex) * rowHeightPx
+        val overshoot = rowHeightPx * 0.42f
+        dragOffsetPx = (dragOffsetPx + deltaY).coerceIn(maxUp - overshoot, maxDown + overshoot)
 
         val target = (dragStartIndex + (dragOffsetPx / rowHeightPx).toInt())
             .coerceIn(0, baseItems.lastIndex)
         if (target != dragTargetIndex) {
             dragTargetIndex = target
         }
+
+        maybeAutoScrollQueue(
+            scope = scope,
+            listState = listState,
+            dragTargetIndex = dragTargetIndex,
+            deltaY = deltaY
+        )
     }
 
     if (saveDialogOpen) {
@@ -349,14 +352,28 @@ private fun maybeAutoScrollQueue(
     dragTargetIndex: Int,
     deltaY: Float
 ) {
-    val visibleInfo = listState.layoutInfo.visibleItemsInfo
-    val firstVisible = visibleInfo.firstOrNull()?.index ?: return
-    val lastVisible = visibleInfo.lastOrNull()?.index ?: return
-    val shouldScrollUp = deltaY < 0f && dragTargetIndex <= firstVisible + 1
-    val shouldScrollDown = deltaY > 0f && dragTargetIndex >= lastVisible - 1
-    if (shouldScrollUp || shouldScrollDown) {
+    val layoutInfo = listState.layoutInfo
+    val visibleInfo = layoutInfo.visibleItemsInfo
+    if (visibleInfo.isEmpty()) return
+
+    val draggedInfo = visibleInfo.firstOrNull { it.index == dragTargetIndex }
+    val firstVisible = visibleInfo.first()
+    val lastVisible = visibleInfo.last()
+
+    val thresholdPx = (draggedInfo?.size ?: firstVisible.size) * 2.8f
+    val distanceToTop = (draggedInfo?.offset ?: firstVisible.offset) - layoutInfo.viewportStartOffset
+    val distanceToBottom = layoutInfo.viewportEndOffset - ((draggedInfo?.offset ?: lastVisible.offset) + (draggedInfo?.size ?: lastVisible.size))
+
+    val direction = when {
+        deltaY < 0f && (distanceToTop < thresholdPx || dragTargetIndex <= firstVisible.index + 1) -> -1f
+        deltaY > 0f && (distanceToBottom < thresholdPx || dragTargetIndex >= lastVisible.index - 1) -> 1f
+        else -> 0f
+    }
+
+    if (direction != 0f) {
+        val distance = (abs(deltaY) * 3.4f).coerceIn(30f, 140f)
         scope.launch {
-            listState.scrollBy(deltaY * 1.7f)
+            listState.scrollBy(direction * distance)
         }
     }
 }
