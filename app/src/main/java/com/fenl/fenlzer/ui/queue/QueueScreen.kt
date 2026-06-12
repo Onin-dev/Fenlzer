@@ -28,7 +28,6 @@ import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -46,6 +45,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -98,19 +98,48 @@ fun QueueScreen(
     var savePlaylistName by remember { mutableStateOf("Saved queue") }
 
     var initialCurrentScrollDone by remember { mutableStateOf(false) }
+    var pendingOrderIds by remember { mutableStateOf<List<String>?>(null) }
+
     var draggingQueueItemId by remember { mutableStateOf<String?>(null) }
     var dragStartIndex by remember { mutableIntStateOf(-1) }
     var dragTargetIndex by remember { mutableIntStateOf(-1) }
     var dragOffsetPx by remember { mutableFloatStateOf(0f) }
 
     val liveCurrentQueueItemId = playbackState.currentItem?.queueItemId
-    val visibleItems = playbackState.queueItems.filterNot { it.queueItemId in pendingHiddenIds }
-    val sourceIds = playbackState.queueItems.map { it.queueItemId }.toSet()
-    val currentVisibleIndex = visibleItems.indexOfFirst { it.queueItemId == liveCurrentQueueItemId }
+    val sourceItems = playbackState.queueItems.filterNot { it.queueItemId in pendingHiddenIds }
+    val sourceIds = sourceItems.map { it.queueItemId }
+    val sourceIdSet = sourceIds.toSet()
 
     LaunchedEffect(sourceIds.joinToString("|")) {
-        pendingHiddenIds = pendingHiddenIds.intersect(sourceIds)
+        pendingHiddenIds = pendingHiddenIds.intersect(sourceIdSet)
+
+        val pending = pendingOrderIds
+        if (pending != null) {
+            when {
+                pending == sourceIds -> pendingOrderIds = null
+                pending.toSet() != sourceIdSet -> pendingOrderIds = null
+            }
+        }
     }
+
+    val baseItems by remember(sourceItems, pendingOrderIds) {
+        derivedStateOf {
+            val pending = pendingOrderIds
+            if (pending != null && pending.toSet() == sourceIdSet) {
+                val byId = sourceItems.associateBy { it.queueItemId }
+                pending.mapNotNull(byId::get)
+            } else {
+                sourceItems
+            }
+        }
+    }
+
+    val visibleItems = previewReorderedItems(
+        items = baseItems,
+        draggingQueueItemId = draggingQueueItemId,
+        targetIndex = dragTargetIndex
+    )
+    val currentVisibleIndex = visibleItems.indexOfFirst { it.queueItemId == liveCurrentQueueItemId }
 
     LaunchedEffect(visibleItems.size, liveCurrentQueueItemId) {
         if (!initialCurrentScrollDone && currentVisibleIndex >= 0) {
@@ -122,12 +151,16 @@ fun QueueScreen(
     fun clearDrag(commit: Boolean) {
         val itemId = draggingQueueItemId
         val delta = dragTargetIndex - dragStartIndex
-        if (commit && itemId != null && delta != 0) {
-            val step = if (delta > 0) 1 else -1
-            repeat(abs(delta)) {
-                onMoveItem(itemId, step)
-            }
+
+        if (commit && itemId != null && delta != 0 && dragStartIndex in baseItems.indices && dragTargetIndex in baseItems.indices) {
+            pendingOrderIds = moveId(
+                ids = baseItems.map { it.queueItemId },
+                fromIndex = dragStartIndex,
+                toIndex = dragTargetIndex
+            )
+            onMoveItem(itemId, delta)
         }
+
         draggingQueueItemId = null
         dragStartIndex = -1
         dragTargetIndex = -1
@@ -137,6 +170,7 @@ fun QueueScreen(
     fun requestUndoableRemoval(item: QueueTrackItem) {
         if (item.queueItemId in pendingHiddenIds) return
         pendingHiddenIds = pendingHiddenIds + item.queueItemId
+        pendingOrderIds = pendingOrderIds?.filterNot { it == item.queueItemId }
         scope.launch {
             val result = snackbarHostState.showSnackbar(
                 message = "Removed from queue",
@@ -146,6 +180,7 @@ fun QueueScreen(
             )
             if (result == SnackbarResult.ActionPerformed) {
                 pendingHiddenIds = pendingHiddenIds - item.queueItemId
+                pendingOrderIds = null
             } else {
                 onRemoveItem(item.queueItemId)
             }
@@ -154,7 +189,7 @@ fun QueueScreen(
 
     fun startDrag(item: QueueTrackItem) {
         if (item.queueItemId == liveCurrentQueueItemId) return
-        val index = visibleItems.indexOfFirst { it.queueItemId == item.queueItemId }
+        val index = baseItems.indexOfFirst { it.queueItemId == item.queueItemId }
         if (index < 0) return
         draggingQueueItemId = item.queueItemId
         dragStartIndex = index
@@ -163,7 +198,7 @@ fun QueueScreen(
     }
 
     fun dragBy(deltaY: Float) {
-        if (draggingQueueItemId == null || dragStartIndex < 0) return
+        if (draggingQueueItemId == null || dragStartIndex !in baseItems.indices) return
         dragOffsetPx += deltaY
         maybeAutoScrollQueue(
             scope = scope,
@@ -171,10 +206,11 @@ fun QueueScreen(
             dragTargetIndex = dragTargetIndex,
             deltaY = deltaY
         )
-        val rawTarget = (dragStartIndex + (dragOffsetPx / rowHeightPx).toInt())
-            .coerceIn(0, visibleItems.lastIndex)
-        if (rawTarget != dragTargetIndex) {
-            dragTargetIndex = rawTarget
+
+        val target = (dragStartIndex + (dragOffsetPx / rowHeightPx).toInt())
+            .coerceIn(0, baseItems.lastIndex)
+        if (target != dragTargetIndex) {
+            dragTargetIndex = target
         }
     }
 
@@ -252,14 +288,7 @@ fun QueueScreen(
                                 isCurrent = isCurrent,
                                 isQueueDragActive = draggingQueueItemId != null,
                                 isDragging = isDragging,
-                                visualOffsetPx = visualQueueRowOffsetPx(
-                                    index = index,
-                                    isDragging = isDragging,
-                                    dragOffsetPx = dragOffsetPx,
-                                    dragStartIndex = dragStartIndex,
-                                    dragTargetIndex = dragTargetIndex,
-                                    rowHeightPx = rowHeightPx
-                                ),
+                                dragOffsetPx = if (isDragging) dragOffsetPx - ((dragTargetIndex - dragStartIndex) * rowHeightPx) else 0f,
                                 canMoveUp = !isCurrent && index > 0,
                                 canMoveDown = !isCurrent && index < visibleItems.lastIndex,
                                 onRequestUndoableRemoval = ::requestUndoableRemoval,
@@ -288,21 +317,29 @@ fun QueueScreen(
 
 private val QueueRowHeight = 72.dp
 
-private fun visualQueueRowOffsetPx(
-    index: Int,
-    isDragging: Boolean,
-    dragOffsetPx: Float,
-    dragStartIndex: Int,
-    dragTargetIndex: Int,
-    rowHeightPx: Float
-): Float {
-    if (dragStartIndex < 0 || dragTargetIndex < 0) return 0f
-    if (isDragging) return dragOffsetPx
+private fun previewReorderedItems(
+    items: List<QueueTrackItem>,
+    draggingQueueItemId: String?,
+    targetIndex: Int
+): List<QueueTrackItem> {
+    if (draggingQueueItemId == null || targetIndex !in items.indices) return items
+    val fromIndex = items.indexOfFirst { it.queueItemId == draggingQueueItemId }
+    if (fromIndex == -1 || fromIndex == targetIndex) return items
+    return items.toMutableList().apply {
+        val moved = removeAt(fromIndex)
+        add(targetIndex, moved)
+    }
+}
 
-    return when {
-        dragTargetIndex > dragStartIndex && index in (dragStartIndex + 1)..dragTargetIndex -> -rowHeightPx
-        dragTargetIndex < dragStartIndex && index in dragTargetIndex until dragStartIndex -> rowHeightPx
-        else -> 0f
+private fun moveId(
+    ids: List<String>,
+    fromIndex: Int,
+    toIndex: Int
+): List<String> {
+    if (fromIndex !in ids.indices || toIndex !in ids.indices || fromIndex == toIndex) return ids
+    return ids.toMutableList().apply {
+        val moved = removeAt(fromIndex)
+        add(toIndex, moved)
     }
 }
 
@@ -457,7 +494,7 @@ private fun QueueRow(
     isCurrent: Boolean,
     isQueueDragActive: Boolean,
     isDragging: Boolean,
-    visualOffsetPx: Float,
+    dragOffsetPx: Float,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
     onRequestUndoableRemoval: (QueueTrackItem) -> Unit,
@@ -502,7 +539,7 @@ private fun QueueRow(
             .fillMaxWidth()
             .heightIn(min = QueueRowHeight)
             .graphicsLayer {
-                translationY = visualOffsetPx
+                translationY = dragOffsetPx
                 shadowElevation = if (isDragging) 16f else 0f
                 scaleX = if (isDragging) 1.015f else 1f
                 scaleY = if (isDragging) 1.015f else 1f
