@@ -19,23 +19,18 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.LibraryMusic
-import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -44,13 +39,13 @@ import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -80,40 +75,57 @@ fun QueueScreen(
     onMoveItem: (String, Int) -> Unit = { _, _ -> },
     onShuffleQueue: () -> Unit = {},
     onShuffleUpcoming: () -> Unit = {},
-    onSaveAsPlaylist: (String) -> Unit = {}
+    onSaveQueueAsPlaylist: (String) -> Unit = {}
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    var saveDialogVisible by rememberSaveable { mutableStateOf(false) }
-    var playlistName by rememberSaveable { mutableStateOf(defaultQueuePlaylistName(playbackState.sourceLabel)) }
+    var pendingHiddenIds by remember { mutableStateOf(emptySet<String>()) }
+    var saveDialogOpen by remember { mutableStateOf(false) }
+    var savePlaylistName by remember { mutableStateOf("Saved queue") }
 
-    if (saveDialogVisible) {
+    fun requestUndoableRemoval(item: QueueTrackItem) {
+        if (item.queueItemId in pendingHiddenIds) return
+        pendingHiddenIds = pendingHiddenIds + item.queueItemId
+        scope.launch {
+            val result = snackbarHostState.showSnackbar(
+                message = "Removed from queue",
+                actionLabel = "Undo",
+                withDismissAction = true
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                pendingHiddenIds = pendingHiddenIds - item.queueItemId
+            } else {
+                onRemoveItem(item.queueItemId)
+            }
+        }
+    }
+
+    if (saveDialogOpen) {
         AlertDialog(
-            onDismissRequest = { saveDialogVisible = false },
+            onDismissRequest = { saveDialogOpen = false },
             title = { Text(text = "Save queue as playlist") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(text = "Only local/imported songs are saved. Remote Discover items stay in the queue but are skipped for the new playlist.")
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(text = "Only local/imported songs can be saved. Remote-only queue items are skipped.")
                     OutlinedTextField(
-                        value = playlistName,
-                        onValueChange = { playlistName = it },
+                        value = savePlaylistName,
+                        onValueChange = { savePlaylistName = it },
                         singleLine = true,
-                        label = { Text(text = "Playlist name") },
-                        modifier = Modifier.fillMaxWidth()
+                        label = { Text(text = "Playlist name") }
                     )
                 }
             },
             confirmButton = {
                 TextButton(
-                    enabled = playlistName.isNotBlank(),
                     onClick = {
-                        onSaveAsPlaylist(playlistName.trim())
-                        saveDialogVisible = false
+                        val name = savePlaylistName.trim().ifBlank { "Saved queue" }
+                        saveDialogOpen = false
+                        onSaveQueueAsPlaylist(name)
                     }
                 ) { Text(text = "Save") }
             },
             dismissButton = {
-                TextButton(onClick = { saveDialogVisible = false }) { Text(text = "Cancel") }
+                TextButton(onClick = { saveDialogOpen = false }) { Text(text = "Cancel") }
             }
         )
     }
@@ -125,18 +137,23 @@ fun QueueScreen(
         tonalElevation = if (isPanel) 8.dp else 0.dp,
         color = MaterialTheme.colorScheme.surface
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            Column(modifier = Modifier.fillMaxSize()) {
+        Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { scaffoldPadding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(scaffoldPadding)
+            ) {
                 QueueHeader(
                     playbackState = playbackState,
                     onBack = onBack,
                     onClearUpcoming = onClearUpcoming,
                     onShuffleQueue = onShuffleQueue,
                     onShuffleUpcoming = onShuffleUpcoming,
-                    onSaveAsPlaylist = { saveDialogVisible = true }
+                    onSaveQueue = { saveDialogOpen = true }
                 )
                 HorizontalDivider()
-                if (playbackState.queueItems.isEmpty()) {
+                val visibleItems = playbackState.queueItems.filterNot { it.queueItemId in pendingHiddenIds }
+                if (visibleItems.isEmpty()) {
                     EmptyQueueState(modifier = Modifier.weight(1f))
                 } else {
                     LazyColumn(
@@ -144,7 +161,7 @@ fun QueueScreen(
                         contentPadding = PaddingValues(vertical = 8.dp)
                     ) {
                         itemsIndexed(
-                            items = playbackState.queueItems,
+                            items = visibleItems,
                             key = { _, item -> item.queueItemId }
                         ) { index, item ->
                             val isCurrent = item.state == QueueListEditor.STATE_CURRENT
@@ -152,37 +169,17 @@ fun QueueScreen(
                                 item = item,
                                 isCurrent = isCurrent,
                                 canMoveUp = !isCurrent && index > 0,
-                                canMoveDown = !isCurrent && index < playbackState.queueItems.lastIndex,
-                                onRequestRemoveItem = { queueItem ->
-                                    if (queueItem.state == QueueListEditor.STATE_CURRENT) {
-                                        onRemoveItem(queueItem.queueItemId)
-                                    } else {
-                                        scope.launch {
-                                            val result = snackbarHostState.showSnackbar(
-                                                message = "Remove ${queueItem.displayTitle} from queue?",
-                                                actionLabel = "Undo",
-                                                withDismissAction = true,
-                                                duration = SnackbarDuration.Short
-                                            )
-                                            if (result != SnackbarResult.ActionPerformed) {
-                                                onRemoveItem(queueItem.queueItemId)
-                                            }
-                                        }
-                                    }
-                                },
+                                canMoveDown = !isCurrent && index < visibleItems.lastIndex,
+                                onRemoveItem = onRemoveItem,
+                                onRequestUndoableRemoval = ::requestUndoableRemoval,
                                 onJumpToItem = onJumpToItem,
-                                onMoveItem = onMoveItem
+                                onMoveUp = { onMoveItem(item.queueItemId, -1) },
+                                onMoveDown = { onMoveItem(item.queueItemId, 1) }
                             )
                         }
                     }
                 }
             }
-            SnackbarHost(
-                hostState = snackbarHostState,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(16.dp)
-            )
         }
     }
 }
@@ -194,9 +191,8 @@ private fun QueueHeader(
     onClearUpcoming: () -> Unit,
     onShuffleQueue: () -> Unit,
     onShuffleUpcoming: () -> Unit,
-    onSaveAsPlaylist: () -> Unit
+    onSaveQueue: () -> Unit
 ) {
-    var menuExpanded by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -218,43 +214,6 @@ private fun QueueHeader(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Box {
-                IconButton(onClick = { menuExpanded = true }) {
-                    Icon(imageVector = Icons.Rounded.MoreVert, contentDescription = "Queue actions")
-                }
-                DropdownMenu(
-                    expanded = menuExpanded,
-                    onDismissRequest = { menuExpanded = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text(text = "Shuffle whole queue") },
-                        leadingIcon = { Icon(imageVector = Icons.Rounded.Shuffle, contentDescription = null) },
-                        enabled = playbackState.queueItems.size > 1,
-                        onClick = {
-                            menuExpanded = false
-                            onShuffleQueue()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(text = "Shuffle upcoming") },
-                        leadingIcon = { Icon(imageVector = Icons.Rounded.Shuffle, contentDescription = null) },
-                        enabled = playbackState.upcomingCount > 1,
-                        onClick = {
-                            menuExpanded = false
-                            onShuffleUpcoming()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(text = "Save queue as playlist") },
-                        leadingIcon = { Icon(imageVector = Icons.Rounded.Save, contentDescription = null) },
-                        enabled = playbackState.queueItems.any { it.localTrackId != null },
-                        onClick = {
-                            menuExpanded = false
-                            onSaveAsPlaylist()
-                        }
-                    )
-                }
-            }
             TextButton(onClick = onBack) { Text(text = "Close") }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -264,14 +223,32 @@ private fun QueueHeader(
                 modifier = Modifier.weight(1f)
             ) {
                 Icon(imageVector = Icons.Rounded.ClearAll, contentDescription = null)
-                Text(text = "Clear Upcoming", modifier = Modifier.padding(start = 8.dp))
+                Text(text = "Clear", modifier = Modifier.padding(start = 8.dp))
             }
-            Button(
-                onClick = onSaveAsPlaylist,
-                enabled = playbackState.queueItems.any { it.localTrackId != null },
+            OutlinedButton(
+                onClick = onShuffleUpcoming,
+                enabled = playbackState.upcomingCount > 1,
                 modifier = Modifier.weight(1f)
             ) {
-                Icon(imageVector = Icons.Rounded.LibraryMusic, contentDescription = null)
+                Icon(imageVector = Icons.Rounded.Shuffle, contentDescription = null)
+                Text(text = "Upcoming", modifier = Modifier.padding(start = 8.dp))
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = onShuffleQueue,
+                enabled = playbackState.queueItems.size > 2,
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(imageVector = Icons.Rounded.Shuffle, contentDescription = null)
+                Text(text = "Shuffle all", modifier = Modifier.padding(start = 8.dp))
+            }
+            Button(
+                onClick = onSaveQueue,
+                enabled = playbackState.queueItems.any { !it.isRemote && (it.localTrackId ?: it.trackId).isNotBlank() },
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(imageVector = Icons.Rounded.Save, contentDescription = null)
                 Text(text = "Save", modifier = Modifier.padding(start = 8.dp))
             }
         }
@@ -309,24 +286,26 @@ private fun QueueRow(
     isCurrent: Boolean,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
-    onRequestRemoveItem: (QueueTrackItem) -> Unit,
+    onRemoveItem: (String) -> Unit,
+    onRequestUndoableRemoval: (QueueTrackItem) -> Unit,
     onJumpToItem: (String) -> Unit,
-    onMoveItem: (String, Int) -> Unit
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit
 ) {
     var confirmCurrentRemoval by remember { mutableStateOf(false) }
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
-            if (value == SwipeToDismissBoxValue.EndToStart) {
-                false
-            } else if (value == SwipeToDismissBoxValue.StartToEnd) {
-                if (isCurrent) {
-                    confirmCurrentRemoval = true
-                } else {
-                    onRequestRemoveItem(item)
+            when (value) {
+                SwipeToDismissBoxValue.StartToEnd -> {
+                    if (isCurrent) {
+                        confirmCurrentRemoval = true
+                    } else {
+                        onRequestUndoableRemoval(item)
+                    }
+                    false
                 }
-                false
-            } else {
-                false
+                SwipeToDismissBoxValue.EndToStart -> false
+                SwipeToDismissBoxValue.Settled -> false
             }
         }
     )
@@ -340,7 +319,7 @@ private fun QueueRow(
                 TextButton(
                     onClick = {
                         confirmCurrentRemoval = false
-                        onRequestRemoveItem(item)
+                        onRemoveItem(item.queueItemId)
                     }
                 ) { Text(text = "Remove") }
             },
@@ -362,7 +341,7 @@ private fun QueueRow(
                 contentAlignment = Alignment.CenterStart
             ) {
                 Text(
-                    text = if (isCurrent) "Confirm remove" else "Remove",
+                    text = "Remove",
                     color = MaterialTheme.colorScheme.onErrorContainer,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -416,11 +395,12 @@ private fun QueueRow(
             },
             trailingContent = {
                 DragStepHandle(
-                    enabled = !isCurrent && (canMoveUp || canMoveDown),
-                    contentDescription = if (isCurrent) "Current song cannot be moved" else "Drag to reorder queue item",
-                    testTag = "queueDragHandle_${item.queueItemId}",
-                    onMoveUp = { if (canMoveUp) onMoveItem(item.queueItemId, -1) },
-                    onMoveDown = { if (canMoveDown) onMoveItem(item.queueItemId, 1) }
+                    canMoveUp = canMoveUp,
+                    canMoveDown = canMoveDown,
+                    onMoveUp = onMoveUp,
+                    onMoveDown = onMoveDown,
+                    enabled = !isCurrent,
+                    contentDescription = if (isCurrent) "Current song stays fixed" else "Reorder queue item"
                 )
             },
             modifier = Modifier
@@ -442,7 +422,7 @@ private fun queueSubtitle(item: QueueTrackItem): String {
 
 private fun String?.queueLabel(): String = when (this) {
     "READY" -> "Ready"
-    "GETTING_STREAM" -> "Downloading"
+    "GETTING_STREAM" -> "Resolving"
     "UNAVAILABLE", "STREAM_FAILED" -> "Unavailable"
     "IMPORTED" -> "Imported"
     null -> "Remote only"
@@ -450,11 +430,3 @@ private fun String?.queueLabel(): String = when (this) {
         .replace('_', ' ')
         .replaceFirstChar { it.titlecase(Locale.US) }
 }
-
-private fun defaultQueuePlaylistName(sourceLabel: String): String =
-    sourceLabel
-        .removePrefix("Queue from ")
-        .removeSuffix(" - Modified")
-        .takeIf { it.isNotBlank() && it != "Queue" }
-        ?.let { "$it Queue" }
-        ?: "Saved Queue"

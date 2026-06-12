@@ -261,7 +261,7 @@ object QueueListEditor {
             ?: return EditedQueue(renumber(sorted, currentQueueItemId), currentQueueItemId, false, null)
         val shuffled = sorted
             .filterNot { it.queueItemId == currentQueueItemId }
-            .shuffled(random)
+            .let { others -> ensureActuallyReordered(others, others.shuffled(random)) }
             .toMutableList()
         val currentIndex = sorted.indexOfFirst { it.queueItemId == currentQueueItemId }
             .coerceIn(0, shuffled.size)
@@ -290,7 +290,8 @@ object QueueListEditor {
             )
         }
         val beforeAndCurrent = sorted.take(currentIndex + 1)
-        val shuffledUpcoming = sorted.drop(currentIndex + 1).shuffled(random)
+        val upcoming = sorted.drop(currentIndex + 1)
+        val shuffledUpcoming = ensureActuallyReordered(upcoming, upcoming.shuffled(random))
         return EditedQueue(
             items = renumber(beforeAndCurrent + shuffledUpcoming, currentQueueItemId),
             currentQueueItemId = currentQueueItemId,

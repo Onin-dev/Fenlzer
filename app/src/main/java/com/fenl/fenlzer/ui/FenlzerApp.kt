@@ -91,6 +91,7 @@ fun FenlzerApp(
     appGraph: AppGraph,
     modifier: Modifier = Modifier
 ) {
+    val phase16Scope = rememberCoroutineScope()
     val navController = rememberNavController()
     val settings by appGraph.settingsRepository.settings.collectAsStateWithLifecycle()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -494,7 +495,27 @@ private fun FenlzerScaffold(
                         .align(Alignment.CenterEnd)
                         .fillMaxHeight()
                         .widthIn(min = 360.dp, max = 440.dp)
-                )
+                ,
+                    onMoveItem = { queueItemId, offset ->
+                        phase16Scope.launch { appGraph.queueRepository?.moveQueueItem(queueItemId, offset) }
+                    },
+                    onShuffleQueue = {
+                        phase16Scope.launch { appGraph.queueRepository?.shuffleQueue() }
+                    },
+                    onShuffleUpcoming = {
+                        phase16Scope.launch { appGraph.queueRepository?.shuffleUpcoming() }
+                    },
+                    onSaveQueueAsPlaylist = { name ->
+                        phase16Scope.launch {
+                            val trackIds = playbackState.queueItems
+                                .filterNot { it.isRemote }
+                                .mapNotNull { it.localTrackId ?: it.trackId }
+                                .distinct()
+                            if (trackIds.isNotEmpty()) {
+                                appGraph.playlistRepository?.saveStaticPlaylist(name, trackIds)
+                            }
+                        }
+                    })
             }
         }
     }
@@ -1052,7 +1073,27 @@ private fun FenlzerNavHost(
                 onClearUpcoming = {
                     appGraph.playbackController?.clearUpcoming()
                 }
-            )
+            ,
+                onMoveItem = { queueItemId, offset ->
+                    phase16Scope.launch { appGraph.queueRepository?.moveQueueItem(queueItemId, offset) }
+                },
+                onShuffleQueue = {
+                    phase16Scope.launch { appGraph.queueRepository?.shuffleQueue() }
+                },
+                onShuffleUpcoming = {
+                    phase16Scope.launch { appGraph.queueRepository?.shuffleUpcoming() }
+                },
+                onSaveQueueAsPlaylist = { name ->
+                    phase16Scope.launch {
+                        val trackIds = playbackState.queueItems
+                            .filterNot { it.isRemote }
+                            .mapNotNull { it.localTrackId ?: it.trackId }
+                            .distinct()
+                        if (trackIds.isNotEmpty()) {
+                            appGraph.playlistRepository?.saveStaticPlaylist(name, trackIds)
+                        }
+                    }
+                })
         }
 
         composable(FenlzerRoute.Diagnostics.route) {

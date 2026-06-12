@@ -273,7 +273,8 @@ class QueueRepository(
         val state = queueDao.getQueueState() ?: defaultQueueState()
         val edited = QueueListEditor.shuffleEntireQueue(
             existingItems = queueDao.getQueueItems(),
-            currentQueueItemId = state.currentQueueItemId
+            currentQueueItemId = state.currentQueueItemId,
+            random = Random(now())
         )
         val updatedState = state.copy(
             sourceType = "QUEUE",
@@ -291,7 +292,8 @@ class QueueRepository(
         val state = queueDao.getQueueState() ?: defaultQueueState()
         val edited = QueueListEditor.shuffleUpcoming(
             existingItems = queueDao.getQueueItems(),
-            currentQueueItemId = state.currentQueueItemId
+            currentQueueItemId = state.currentQueueItemId,
+            random = Random(now())
         )
         val updatedState = state.copy(
             sourceType = "QUEUE",
