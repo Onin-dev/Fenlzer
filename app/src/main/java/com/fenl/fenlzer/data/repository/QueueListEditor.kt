@@ -243,62 +243,97 @@ object QueueListEditor {
         )
     }
 
-    fun shuffleEntireQueue(
-        existingItems: List<QueueItemEntity>,
-        currentQueueItemId: String?,
-        random: Random = Random.Default
-    ): EditedQueue {
-        val sorted = existingItems.sortedBy { it.position }
-        if (sorted.size < 2 || currentQueueItemId == null) {
-            return EditedQueue(
-                items = renumber(sorted, currentQueueItemId),
-                currentQueueItemId = currentQueueItemId,
-                changed = false,
-                message = null
-            )
-        }
-        val current = sorted.firstOrNull { it.queueItemId == currentQueueItemId }
-            ?: return EditedQueue(renumber(sorted, currentQueueItemId), currentQueueItemId, false, null)
-        val shuffled = sorted
-            .filterNot { it.queueItemId == currentQueueItemId }
-            .let { others -> ensureActuallyReordered(others, others.shuffled(random)) }
-            .toMutableList()
-        val currentIndex = sorted.indexOfFirst { it.queueItemId == currentQueueItemId }
-            .coerceIn(0, shuffled.size)
-        shuffled.add(currentIndex, current)
+    
+fun shuffleEntireQueue(
+    existingItems: List<QueueItemEntity>,
+    currentQueueItemId: String?,
+    random: Random = Random.Default
+): EditedQueue {
+    val sorted = existingItems.sortedBy { it.position }
+    if (sorted.size < 2 || currentQueueItemId == null) {
         return EditedQueue(
-            items = renumber(shuffled, currentQueueItemId),
+            items = renumber(sorted, currentQueueItemId),
             currentQueueItemId = currentQueueItemId,
-            changed = true,
-            message = "Queue shuffled"
+            changed = false,
+            message = null
         )
     }
 
-    fun shuffleUpcoming(
-        existingItems: List<QueueItemEntity>,
-        currentQueueItemId: String?,
-        random: Random = Random.Default
-    ): EditedQueue {
-        val sorted = existingItems.sortedBy { it.position }
-        val currentIndex = sorted.indexOfFirst { it.queueItemId == currentQueueItemId }
-        if (currentIndex == -1 || currentIndex >= sorted.lastIndex) {
-            return EditedQueue(
-                items = renumber(sorted, currentQueueItemId),
-                currentQueueItemId = currentQueueItemId,
-                changed = false,
-                message = "No upcoming songs to shuffle"
-            )
-        }
-        val beforeAndCurrent = sorted.take(currentIndex + 1)
-        val upcoming = sorted.drop(currentIndex + 1)
-        val shuffledUpcoming = ensureActuallyReordered(upcoming, upcoming.shuffled(random))
-        return EditedQueue(
-            items = renumber(beforeAndCurrent + shuffledUpcoming, currentQueueItemId),
+    val current = sorted.firstOrNull { it.queueItemId == currentQueueItemId }
+        ?: return EditedQueue(
+            items = renumber(sorted, currentQueueItemId),
             currentQueueItemId = currentQueueItemId,
-            changed = true,
-            message = "Upcoming songs shuffled"
+            changed = false,
+            message = null
+        )
+
+    val others: List<QueueItemEntity> = sorted.filterNot { it.queueItemId == currentQueueItemId }
+    if (others.size < 2) {
+        return EditedQueue(
+            items = renumber(sorted, currentQueueItemId),
+            currentQueueItemId = currentQueueItemId,
+            changed = false,
+            message = "Not enough songs to shuffle"
         )
     }
+
+    val shuffled: MutableList<QueueItemEntity> = ensureActuallyReordered(
+        original = others,
+        shuffled = others.shuffled(random)
+    ).toMutableList()
+
+    val currentIndex = sorted.indexOfFirst { it.queueItemId == currentQueueItemId }
+        .coerceIn(0, shuffled.size)
+    shuffled.add(currentIndex, current)
+
+    return EditedQueue(
+        items = renumber(shuffled, currentQueueItemId),
+        currentQueueItemId = currentQueueItemId,
+        changed = true,
+        message = "Queue shuffled"
+    )
+}
+
+    
+fun shuffleUpcoming(
+    existingItems: List<QueueItemEntity>,
+    currentQueueItemId: String?,
+    random: Random = Random.Default
+): EditedQueue {
+    val sorted = existingItems.sortedBy { it.position }
+    val currentIndex = sorted.indexOfFirst { it.queueItemId == currentQueueItemId }
+    if (currentIndex == -1 || currentIndex >= sorted.lastIndex) {
+        return EditedQueue(
+            items = renumber(sorted, currentQueueItemId),
+            currentQueueItemId = currentQueueItemId,
+            changed = false,
+            message = "No upcoming songs to shuffle"
+        )
+    }
+
+    val beforeAndCurrent: List<QueueItemEntity> = sorted.take(currentIndex + 1)
+    val upcoming: List<QueueItemEntity> = sorted.drop(currentIndex + 1)
+    if (upcoming.size < 2) {
+        return EditedQueue(
+            items = renumber(sorted, currentQueueItemId),
+            currentQueueItemId = currentQueueItemId,
+            changed = false,
+            message = "Not enough upcoming songs to shuffle"
+        )
+    }
+
+    val shuffledUpcoming: List<QueueItemEntity> = ensureActuallyReordered(
+        original = upcoming,
+        shuffled = upcoming.shuffled(random)
+    )
+
+    return EditedQueue(
+        items = renumber(beforeAndCurrent + shuffledUpcoming, currentQueueItemId),
+        currentQueueItemId = currentQueueItemId,
+        changed = true,
+        message = "Upcoming songs shuffled"
+    )
+}
 
     fun replaceWithTrackIds(
         trackIds: List<String>,
@@ -342,6 +377,20 @@ object QueueListEditor {
             message = null
         )
     }
+
+    private fun ensureActuallyReordered(
+    original: List<QueueItemEntity>,
+    shuffled: List<QueueItemEntity>
+): List<QueueItemEntity> {
+    if (original.size < 2) return shuffled
+    val originalIds = original.map { it.queueItemId }
+    val shuffledIds = shuffled.map { it.queueItemId }
+    return if (originalIds == shuffledIds) {
+        shuffled.drop(1) + shuffled.first()
+    } else {
+        shuffled
+    }
+}
 
     private fun renumber(
         items: List<QueueItemEntity>,
