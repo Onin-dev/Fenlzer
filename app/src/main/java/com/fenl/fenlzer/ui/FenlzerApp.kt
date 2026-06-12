@@ -1048,10 +1048,10 @@ private fun FenlzerNavHost(
                 onViewLibrary = {
                     navController.navigate(FenlzerRoute.Home.route) {
                         popUpTo(navController.graph.findStartDestination().id) {
-                            saveState = tab != FenlzerRoute.Home
+                            saveState = true
                         }
                         launchSingleTop = true
-                        restoreState = tab != FenlzerRoute.Home
+                        restoreState = true
                     }
                 },
                 onOpenSongDetails = onOpenSongDetails,
