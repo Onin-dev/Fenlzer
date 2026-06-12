@@ -52,6 +52,7 @@ import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.layout.ContentScale
 
 @Composable
 fun DiscoverScreen(
@@ -244,7 +245,8 @@ private fun DiscoverRow(
                     AsyncImage(
                         model = item.thumbnailUrl,
                         contentDescription = null,
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
                     )
                 } else {
                     Icon(imageVector = Icons.Rounded.MusicNote, contentDescription = null)

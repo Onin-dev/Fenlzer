@@ -73,6 +73,7 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import androidx.compose.ui.layout.ContentScale
 
 @Composable
 fun QueueScreen(
@@ -726,7 +727,8 @@ private fun QueueThumbnail(
             AsyncImage(
                 model = item.thumbnailUri,
                 contentDescription = null,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
             )
         } else {
             Icon(

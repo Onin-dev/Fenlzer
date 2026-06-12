@@ -91,6 +91,7 @@ import com.fenl.fenlzer.data.settings.HomeSort
 import com.fenl.fenlzer.domain.text.SearchNormalizer
 import java.util.Locale
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.layout.ContentScale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -912,7 +913,8 @@ private fun AlbumArtwork(
             AsyncImage(
                 model = album.thumbnailUri,
                 contentDescription = null,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
             )
         } else {
             Icon(
@@ -1220,7 +1222,8 @@ private fun TrackArtwork(track: LibraryTrack) {
             AsyncImage(
                 model = track.thumbnailUri,
                 contentDescription = null,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
             )
         } else {
             Icon(

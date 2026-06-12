@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.fenl.fenlzer.playback.PlaybackUiState
 import com.fenl.fenlzer.ui.theme.Dimensions
+import androidx.compose.ui.layout.ContentScale
 
 @Composable
 fun MiniPlayer(
@@ -117,7 +118,8 @@ fun MiniPlayer(
                             AsyncImage(
                                 model = currentItem.thumbnailUri,
                                 contentDescription = null,
-                                modifier = Modifier.fillMaxSize()
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
                             )
                         } else {
                             Icon(

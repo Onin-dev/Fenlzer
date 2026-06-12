@@ -17,9 +17,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Add
@@ -83,6 +81,7 @@ import com.fenl.fenlzer.playback.QueueRepeatMode
 import com.fenl.fenlzer.playback.SleepTimerMode
 import java.util.Locale
 import kotlin.math.abs
+import androidx.compose.ui.layout.ContentScale
 
 @Composable
 fun FullscreenPlayer(
@@ -250,7 +249,6 @@ fun FullscreenPlayer(
                 modifier = Modifier
                     .fillMaxSize()
                     .nestedScroll(swipeDownToMinimizeConnection)
-                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 22.dp, vertical = 14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -351,7 +349,8 @@ private fun PlayerArtwork(
             AsyncImage(
                 model = currentItem.thumbnailUri,
                 contentDescription = null,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
             )
         } else {
             Icon(
@@ -633,8 +632,6 @@ private fun PlaybackContext(playbackState: PlaybackUiState) {
     ) {
         ContextLine(label = "Playing from", value = playbackState.sourceLabel)
         ContextLine(label = "Next song", value = nextSong?.displayTitle ?: "End of queue")
-        ContextLine(label = "Repeat", value = playbackState.repeatMode.lowercase().replaceFirstChar { it.titlecase() })
-        ContextLine(label = "Shuffle", value = if (playbackState.shuffleEnabled) "On" else "Off")
         if (playbackState.sleepTimerState.active) {
             ContextLine(
                 label = "Sleep timer",

@@ -103,6 +103,7 @@ import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 import com.fenl.fenlzer.ui.components.DragStepHandle
+import androidx.compose.ui.layout.ContentScale
 
 @Composable
 fun PlaylistsScreen(
@@ -1174,7 +1175,8 @@ private fun PlaylistTrackRow(
                         AsyncImage(
                             model = track.thumbnailUri,
                             contentDescription = null,
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
                         )
                     } else {
                         Icon(
@@ -1498,7 +1500,8 @@ private fun PlaylistCover(
             1 -> AsyncImage(
                 model = usableUris.first(),
                 contentDescription = null,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
             )
 
             else -> Column(modifier = Modifier.fillMaxSize()) {
@@ -1527,7 +1530,8 @@ private fun CoverCell(uri: Uri?, modifier: Modifier = Modifier) {
             AsyncImage(
                 model = uri,
                 contentDescription = null,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
             )
         } else {
             Icon(
@@ -1552,7 +1556,8 @@ private fun TrackArtwork(thumbnailUri: Uri?) {
             AsyncImage(
                 model = thumbnailUri,
                 contentDescription = null,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
             )
         } else {
             Icon(

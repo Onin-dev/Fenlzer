@@ -58,6 +58,7 @@ import com.fenl.fenlzer.data.repository.TrackMetadataDraft
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.compose.ui.layout.ContentScale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -387,7 +388,8 @@ private fun Artwork(details: SongDetails) {
             AsyncImage(
                 model = details.thumbnailUri,
                 contentDescription = null,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
             )
         } else {
             Icon(
