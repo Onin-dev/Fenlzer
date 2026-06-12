@@ -92,6 +92,7 @@ import com.fenl.fenlzer.domain.text.SearchNormalizer
 import java.util.Locale
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material3.ListItemDefaults
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

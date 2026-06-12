@@ -104,6 +104,7 @@ import java.util.Date
 import java.util.Locale
 import com.fenl.fenlzer.ui.components.DragStepHandle
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.material.icons.rounded.Close
 
 @Composable
 fun PlaylistsScreen(
@@ -392,7 +393,9 @@ private fun RegularPlaylistDetailView(
     var searchQuery by rememberSaveable(playlist.playlistId) { mutableStateOf("") }
     var sort by rememberSaveable(playlist.playlistId) { mutableStateOf(PlaylistDetailSort.MANUAL) }
     var showAddSongsSheet by rememberSaveable { mutableStateOf(false) }
-    var showRenameDialog by rememberSaveable { mutableStateOf(false) }
+    
+ var reorderMode by rememberSaveable(playlist.playlistId) { mutableStateOf(false) }
+var showRenameDialog by rememberSaveable { mutableStateOf(false) }
     var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
     val visibleTracks = remember(playlist.tracks, searchQuery, sort) {
@@ -487,11 +490,29 @@ private fun RegularPlaylistDetailView(
                 )
             },
             secondary = {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    onClick = { reorderMode = !reorderMode },
+                    enabled = canReorder
+                ) {
+                    Text(text = if (reorderMode) "Done" else "Reorder")
+                }
+                OutlinedButton(
+                    onClick = { visibleTracks.forEach { onAddToQueue(it.trackId) } },
+                    enabled = visibleTracks.isNotEmpty()
+                ) {
+                    Icon(imageVector = Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = null)
+                    Text(text = "Queue visible")
+                }
                 OutlinedButton(onClick = { showAddSongsSheet = true }) {
                     Icon(imageVector = Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null)
                     Text(text = "Add", modifier = Modifier.padding(start = 8.dp))
                 }
             }
+        }
         )
         if (!canReorder) {
             Text(
@@ -519,7 +540,7 @@ private fun RegularPlaylistDetailView(
                 } else {
                     "No matching songs"
                 },
-                canReorder = canReorder,
+                canReorder = canReorder && reorderMode,
                 sourceTracks = playlist.tracks,
                 showRemove = true,
                 onTrackClick = { track ->
@@ -666,6 +687,17 @@ private fun SmartPlaylistDetailView(
                 )
             },
             secondary = {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    onClick = { visibleTracks.forEach { onAddToQueue(it.trackId) } },
+                    enabled = visibleTracks.isNotEmpty()
+                ) {
+                    Icon(imageVector = Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = null)
+                    Text(text = "Queue visible")
+                }
                 OutlinedButton(
                     onClick = { showSaveDialog = true },
                     enabled = visibleTracks.isNotEmpty()
@@ -674,6 +706,7 @@ private fun SmartPlaylistDetailView(
                     Text(text = "Save", modifier = Modifier.padding(start = 8.dp))
                 }
             }
+        }
         )
     }
     val tracks: @Composable (Modifier) -> Unit = { tracksModifier ->
@@ -1019,6 +1052,13 @@ private fun PlaylistSearchAndSortRow(
             singleLine = true,
             placeholder = { Text(text = "Search songs") },
             leadingIcon = { Icon(imageVector = Icons.Rounded.Search, contentDescription = null) },
+        trailingIcon = {
+            if (searchQuery.isNotBlank()) {
+                IconButton(onClick = { onSearchChanged("") }) {
+                    Icon(imageVector = Icons.Rounded.Close, contentDescription = "Clear playlist search")
+                }
+            }
+        },
             modifier = Modifier.weight(1f)
         )
         Box {
