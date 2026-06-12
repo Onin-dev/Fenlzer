@@ -396,6 +396,15 @@ private fun RegularPlaylistDetailView(
     var showAddSongsSheet by rememberSaveable { mutableStateOf(false) }
     
  var reorderMode by rememberSaveable(playlist.playlistId) { mutableStateOf(false) }
+ var playlistSelectedTrackIds by rememberSaveable(playlist.playlistId) { mutableStateOf(setOf<String>()) }
+ val playlistSelectionMode = playlistSelectedTrackIds.isNotEmpty()
+ fun togglePlaylistTrackSelection(trackId: String) {
+     playlistSelectedTrackIds = if (trackId in playlistSelectedTrackIds) {
+         playlistSelectedTrackIds - trackId
+     } else {
+         playlistSelectedTrackIds + trackId
+     }
+ }
 var showRenameDialog by rememberSaveable { mutableStateOf(false) }
     var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
@@ -501,13 +510,6 @@ var showRenameDialog by rememberSaveable { mutableStateOf(false) }
                 ) {
                     Text(text = if (reorderMode) "Done" else "Reorder")
                 }
-                OutlinedButton(
-                    onClick = { visibleTracks.forEach { onAddToQueue(it.trackId) } },
-                    enabled = visibleTracks.isNotEmpty()
-                ) {
-                    Icon(imageVector = Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = null)
-                    Text(text = "Queue visible")
-                }
                 OutlinedButton(onClick = { showAddSongsSheet = true }) {
                     Icon(imageVector = Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null)
                     Text(text = "Add", modifier = Modifier.padding(start = 8.dp))
@@ -534,8 +536,35 @@ var showRenameDialog by rememberSaveable { mutableStateOf(false) }
                 sort = sort,
                 onSortChanged = { sort = it }
             )
+            if (playlistSelectionMode) {
+
+                PlaylistSelectionActionBar(
+
+                    selectedCount = playlistSelectedTrackIds.size,
+
+                    onAddToQueue = {
+
+                        playlistSelectedTrackIds.forEach(onAddToQueue)
+
+                        playlistSelectedTrackIds = emptySet()
+
+                    },
+
+                    onClearSelection = { playlistSelectedTrackIds = emptySet() }
+
+                )
+
+            }
+
             PlaylistTrackList(
                 tracks = visibleTracks,
+        selectedTrackIds = playlistSelectedTrackIds,
+        selectionMode = playlistSelectionMode,
+        onToggleSelection = ::togglePlaylistTrackSelection,
+        onEnterSelection = { trackId ->
+            playlistSelectedTrackIds = setOf(trackId)
+            reorderMode = false
+        },
                 emptyText = if (playlist.tracks.isEmpty()) {
                     "No songs in this playlist"
                 } else {
@@ -692,13 +721,6 @@ private fun SmartPlaylistDetailView(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedButton(
-                    onClick = { visibleTracks.forEach { onAddToQueue(it.trackId) } },
-                    enabled = visibleTracks.isNotEmpty()
-                ) {
-                    Icon(imageVector = Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = null)
-                    Text(text = "Queue visible")
-                }
                 OutlinedButton(
                     onClick = { showSaveDialog = true },
                     enabled = visibleTracks.isNotEmpty()
@@ -1090,9 +1112,44 @@ private fun PlaylistSearchAndSortRow(
 }
 
 
+
+@Composable
+private fun PlaylistSelectionActionBar(
+    selectedCount: Int,
+    onAddToQueue: () -> Unit,
+    onClearSelection: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.50f))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "$selectedCount selected",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            modifier = Modifier.weight(1f)
+        )
+        OutlinedButton(onClick = onAddToQueue) {
+            Text(text = "Add to queue")
+        }
+        TextButton(onClick = onClearSelection) {
+            Text(text = "Clear")
+        }
+    }
+}
+
 @Composable
 private fun PlaylistTrackList(
     tracks: List<PlaylistTrackItem>,
+    selectedTrackIds: Set<String> = emptySet(),
+    selectionMode: Boolean = false,
+    onToggleSelection: (String) -> Unit = {},
+    onEnterSelection: (String) -> Unit = {},
     emptyText: String,
     canReorder: Boolean,
     sourceTracks: List<PlaylistTrackItem>,
@@ -1148,9 +1205,45 @@ private fun PlaylistTrackList(
             val sourceIndex = sourceIndexByTrackId[track.trackId] ?: -1
             val canMoveUp = canReorder && sourceIndex > 0
             val canMoveDown = canReorder && sourceIndex != -1 && sourceIndex < sourceTracks.lastIndex
+            Box(
+
+                modifier = Modifier
+
+                    .fillMaxWidth()
+
+                    .clip(MaterialTheme.shapes.medium)
+
+                    .background(
+
+                        if (track.trackId in selectedTrackIds) {
+
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
+
+                        } else {
+
+                            MaterialTheme.colorScheme.surface
+
+                        }
+
+                    )
+
+                    .combinedClickable(
+
+                        onClick = {
+
+                            if (selectionMode) onToggleSelection(track.trackId)
+
+                        },
+
+                        onLongClick = { onEnterSelection(track.trackId) }
+
+                    )
+
+            ) {
+
             PlaylistTrackRow(
                 track = track,
-                canReorder = canReorder,
+                canReorder = canReorder && reorderMode,
                 canMoveUp = canMoveUp,
                 canMoveDown = canMoveDown,
                 showRemove = showRemove,
