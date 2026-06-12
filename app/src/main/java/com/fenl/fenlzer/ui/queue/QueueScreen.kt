@@ -105,14 +105,19 @@ fun QueueScreen(
     var dragTargetIndex by remember { mutableIntStateOf(-1) }
     var dragOffsetPx by remember { mutableFloatStateOf(0f) }
 
+    val allSourceIds = playbackState.queueItems.map { it.queueItemId }
+    val allSourceIdSet = allSourceIds.toSet()
     val liveCurrentQueueItemId = playbackState.currentItem?.queueItemId
+
+    LaunchedEffect(allSourceIds.joinToString("|")) {
+        pendingHiddenIds = pendingHiddenIds.intersect(allSourceIdSet)
+    }
+
     val sourceItems = playbackState.queueItems.filterNot { it.queueItemId in pendingHiddenIds }
     val sourceIds = sourceItems.map { it.queueItemId }
     val sourceIdSet = sourceIds.toSet()
 
     LaunchedEffect(sourceIds.joinToString("|")) {
-        pendingHiddenIds = pendingHiddenIds.intersect(sourceIdSet)
-
         val pending = pendingOrderIds
         if (pending != null) {
             when {
@@ -122,7 +127,7 @@ fun QueueScreen(
         }
     }
 
-    val baseItems = remember(sourceItems, pendingOrderIds) {
+    val visibleItems = remember(sourceItems, pendingOrderIds) {
         val pending = pendingOrderIds
         if (pending != null && pending.toSet() == sourceIdSet) {
             val byId = sourceItems.associateBy { it.queueItemId }
@@ -132,23 +137,17 @@ fun QueueScreen(
         }
     }
 
-    val visibleItems = previewReorderedItems(
-        items = baseItems,
-        draggingQueueItemId = draggingQueueItemId,
-        targetIndex = dragTargetIndex
-    )
-
     val currentVisibleIndex = visibleItems.indexOfFirst { it.queueItemId == liveCurrentQueueItemId }
 
     fun minDragOffsetPx(): Float = if (dragStartIndex >= 0) -dragStartIndex * rowHeightPx else 0f
 
-    fun maxDragOffsetPx(): Float = if (dragStartIndex >= 0) (baseItems.lastIndex - dragStartIndex) * rowHeightPx else 0f
+    fun maxDragOffsetPx(): Float = if (dragStartIndex >= 0) (visibleItems.lastIndex - dragStartIndex) * rowHeightPx else 0f
 
     fun updateDragOffsetSafely(newOffset: Float) {
-        if (draggingQueueItemId == null || dragStartIndex !in baseItems.indices || baseItems.isEmpty()) return
+        if (draggingQueueItemId == null || dragStartIndex !in visibleItems.indices || visibleItems.isEmpty()) return
         dragOffsetPx = newOffset.coerceIn(minDragOffsetPx(), maxDragOffsetPx())
         dragTargetIndex = (dragStartIndex + (dragOffsetPx / rowHeightPx).toInt())
-            .coerceIn(0, baseItems.lastIndex)
+            .coerceIn(0, visibleItems.lastIndex)
     }
 
     LaunchedEffect(visibleItems.size, liveCurrentQueueItemId) {
@@ -162,9 +161,9 @@ fun QueueScreen(
         val itemId = draggingQueueItemId
         val delta = dragTargetIndex - dragStartIndex
 
-        if (commit && itemId != null && delta != 0 && dragStartIndex in baseItems.indices && dragTargetIndex in baseItems.indices) {
+        if (commit && itemId != null && delta != 0 && dragStartIndex in visibleItems.indices && dragTargetIndex in visibleItems.indices) {
             pendingOrderIds = moveId(
-                ids = baseItems.map { it.queueItemId },
+                ids = visibleItems.map { it.queueItemId },
                 fromIndex = dragStartIndex,
                 toIndex = dragTargetIndex
             )
@@ -199,7 +198,7 @@ fun QueueScreen(
 
     fun startDrag(item: QueueTrackItem) {
         if (item.queueItemId == liveCurrentQueueItemId) return
-        val index = baseItems.indexOfFirst { it.queueItemId == item.queueItemId }
+        val index = visibleItems.indexOfFirst { it.queueItemId == item.queueItemId }
         if (index < 0) return
         draggingQueueItemId = item.queueItemId
         dragStartIndex = index
@@ -208,7 +207,7 @@ fun QueueScreen(
     }
 
     fun dragBy(deltaY: Float) {
-        if (draggingQueueItemId == null || dragStartIndex !in baseItems.indices || baseItems.isEmpty()) return
+        if (draggingQueueItemId == null || dragStartIndex !in visibleItems.indices || visibleItems.isEmpty()) return
 
         val canMoveUp = dragOffsetPx > minDragOffsetPx()
         val canMoveDown = dragOffsetPx < maxDragOffsetPx()
@@ -225,7 +224,7 @@ fun QueueScreen(
             dragTargetIndex = dragTargetIndex,
             deltaY = deltaY,
             canScrollUp = dragTargetIndex > 0 || dragOffsetPx > minDragOffsetPx(),
-            canScrollDown = dragTargetIndex < baseItems.lastIndex || dragOffsetPx < maxDragOffsetPx(),
+            canScrollDown = dragTargetIndex < visibleItems.lastIndex || dragOffsetPx < maxDragOffsetPx(),
             onScrolled = { consumedScrollPx ->
                 updateDragOffsetSafely(dragOffsetPx + consumedScrollPx)
             }
@@ -301,18 +300,23 @@ fun QueueScreen(
                         ) { index, item ->
                             val isCurrent = item.queueItemId == liveCurrentQueueItemId
                             val isDragging = item.queueItemId == draggingQueueItemId
+                            val rowCanMoveUp = !isCurrent && if (isDragging) dragTargetIndex > 0 else index > 0
+                            val rowCanMoveDown = !isCurrent && if (isDragging) dragTargetIndex < visibleItems.lastIndex else index < visibleItems.lastIndex
                             QueueRow(
                                 item = item,
                                 isCurrent = isCurrent,
                                 isQueueDragActive = draggingQueueItemId != null,
                                 isDragging = isDragging,
-                                dragOffsetPx = if (isDragging) {
-                                    dragOffsetPx - ((dragTargetIndex - dragStartIndex) * rowHeightPx)
-                                } else {
-                                    0f
-                                },
-                                canMoveUp = !isCurrent && index > 0,
-                                canMoveDown = !isCurrent && index < visibleItems.lastIndex,
+                                dragOffsetPx = visualQueueRowOffsetPx(
+                                    index = index,
+                                    isDragging = isDragging,
+                                    dragOffsetPx = dragOffsetPx,
+                                    dragStartIndex = dragStartIndex,
+                                    dragTargetIndex = dragTargetIndex,
+                                    rowHeightPx = rowHeightPx
+                                ),
+                                canMoveUp = rowCanMoveUp,
+                                canMoveDown = rowCanMoveDown,
                                 onRequestUndoableRemoval = ::requestUndoableRemoval,
                                 onJumpToItem = onJumpToItem,
                                 onRemoveCurrentItem = { onRemoveItem(item.queueItemId) },
@@ -339,17 +343,21 @@ fun QueueScreen(
 
 private val QueueRowHeight = 72.dp
 
-private fun previewReorderedItems(
-    items: List<QueueTrackItem>,
-    draggingQueueItemId: String?,
-    targetIndex: Int
-): List<QueueTrackItem> {
-    if (draggingQueueItemId == null || targetIndex !in items.indices) return items
-    val fromIndex = items.indexOfFirst { it.queueItemId == draggingQueueItemId }
-    if (fromIndex == -1 || fromIndex == targetIndex) return items
-    return items.toMutableList().apply {
-        val moved = removeAt(fromIndex)
-        add(targetIndex, moved)
+private fun visualQueueRowOffsetPx(
+    index: Int,
+    isDragging: Boolean,
+    dragOffsetPx: Float,
+    dragStartIndex: Int,
+    dragTargetIndex: Int,
+    rowHeightPx: Float
+): Float {
+    if (dragStartIndex < 0 || dragTargetIndex < 0) return 0f
+    if (isDragging) return dragOffsetPx
+
+    return when {
+        dragTargetIndex > dragStartIndex && index in (dragStartIndex + 1)..dragTargetIndex -> -rowHeightPx
+        dragTargetIndex < dragStartIndex && index in dragTargetIndex until dragStartIndex -> rowHeightPx
+        else -> 0f
     }
 }
 

@@ -20,14 +20,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 
-/**
- * Stable handle-only reorder affordance.
- *
- * Important: the pointer input is keyed only by [enabled]. During queue reordering,
- * canMoveUp/canMoveDown change when the dragged row reaches the first/last slot.
- * Keying pointerInput by those values cancels the active drag, which was the cause
- * of the frozen out-of-bounds state.
- */
 @Composable
 fun DragStepHandle(
     onMoveUp: () -> Unit,
@@ -84,8 +76,6 @@ fun DragStepHandle(
                         when {
                             deltaY < 0f && latestCanMoveUp -> liveDrag(deltaY)
                             deltaY > 0f && latestCanMoveDown -> liveDrag(deltaY)
-                            // At list bounds, keep the gesture alive but do not
-                            // forward illegal movement into QueueScreen.
                             else -> Unit
                         }
                     } else {
