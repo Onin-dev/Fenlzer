@@ -1434,6 +1434,16 @@ private fun String.isPreviewReadyForWholeImport(): Boolean =
 
 private val retryableHistoryResults = setOf("FAILED", "CANCELLED")
 
+
+private fun String.isProbablyYoutubeUrl(): Boolean {
+    val value = trim().lowercase(Locale.US)
+    return value.startsWith("http://") ||
+        value.startsWith("https://") ||
+        value.contains("youtube.com/watch") ||
+        value.contains("youtu.be/") ||
+        value.contains("music.youtube.com/")
+}
+
 private fun Long.formatDuration(): String {
     if (this <= 0L) return "0:00"
     val totalSeconds = this / 1000L
