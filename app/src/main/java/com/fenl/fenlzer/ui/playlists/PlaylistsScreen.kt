@@ -105,6 +105,7 @@ import java.util.Locale
 import com.fenl.fenlzer.ui.components.DragStepHandle
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 
 @Composable
 fun PlaylistsScreen(
