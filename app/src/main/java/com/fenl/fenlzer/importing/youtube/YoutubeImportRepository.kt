@@ -103,21 +103,33 @@ class YoutubeImportRepository(
     }
 
     suspend fun search(query: String): List<YoutubeSearchResultItem> =
-        withContext(dispatchers.io) {
-            val trimmedQuery = query.trim()
-            if (trimmedQuery.isBlank()) {
-                throw YoutubeImportException(
-                    message = "Enter a YouTube search query first.",
-                    errorCode = "EMPTY_QUERY",
-                    retryable = false
-                )
-            }
-
-            apiRepository.searchYoutube(query = trimmedQuery, limit = if (trimmedQuery.isLikelyYoutubeUrl()) 1 else 5)
-                .results
-                .take(if (trimmedQuery.isLikelyYoutubeUrl()) 1 else 5)
-                .map { it.toImportItem() }
+    withContext(dispatchers.io) {
+        val trimmedQuery = query.trim()
+        if (trimmedQuery.isBlank()) {
+            throw YoutubeImportException(
+                message = "Enter a YouTube search query first.",
+                errorCode = "EMPTY_QUERY",
+                retryable = false
+            )
         }
+
+        val videoId = trimmedQuery.extractYoutubeVideoId()
+        val apiQuery = videoId ?: trimmedQuery
+        val limit = if (videoId != null) 1 else 5
+
+        val results = apiRepository.searchYoutube(query = apiQuery, limit = limit)
+            .results
+            .take(limit)
+            .map { it.toImportItem() }
+
+        if (results.isNotEmpty()) {
+            results
+        } else if (videoId != null) {
+            listOf(trimmedQuery.toExactYoutubeUrlResult(videoId))
+        } else {
+            emptyList()
+        }
+    }
 
     suspend fun createPlaylistPreview(playlistUrl: String): YoutubePlaylistPreview =
         withContext(dispatchers.io) {
@@ -1523,12 +1535,38 @@ object YoutubeTransferRules {
 }
 
 
-private fun String.isLikelyYoutubeUrl(): Boolean {
-    val value = trim().lowercase(Locale.US)
-    return value.startsWith("http://") ||
-        value.startsWith("https://") ||
-        value.contains("youtube.com/watch") ||
-        value.contains("youtu.be/") ||
-        value.contains("music.youtube.com/")
+private fun String.extractYoutubeVideoId(): String? {
+    val trimmed = trim()
+    val watchMatch = Regex("[?&]v=([A-Za-z0-9_-]{11})").find(trimmed)?.groupValues?.getOrNull(1)
+    if (watchMatch != null) return watchMatch
+    val shortMatch = Regex("youtu\\.be/([A-Za-z0-9_-]{11})").find(trimmed)?.groupValues?.getOrNull(1)
+    if (shortMatch != null) return shortMatch
+    val shortsMatch = Regex("/shorts/([A-Za-z0-9_-]{11})").find(trimmed)?.groupValues?.getOrNull(1)
+    if (shortsMatch != null) return shortsMatch
+    val embedMatch = Regex("/embed/([A-Za-z0-9_-]{11})").find(trimmed)?.groupValues?.getOrNull(1)
+    if (embedMatch != null) return embedMatch
+    return trimmed.takeIf { Regex("^[A-Za-z0-9_-]{11}$").matches(it) }
 }
+
+private fun String.toExactYoutubeUrlResult(videoId: String): YoutubeSearchResultItem {
+    val canonicalUrl = "https://www.youtube.com/watch?v=$videoId"
+    return YoutubeSearchResultItem(
+        remoteItemId = "youtube:$videoId",
+        youtubeVideoId = videoId,
+        sourceUrl = canonicalUrl,
+        title = "YouTube video $videoId",
+        artistOrChannel = "YouTube",
+        durationMs = null,
+        thumbnailUrl = "https://i.ytimg.com/vi/$videoId/hqdefault.jpg",
+        canStream = true,
+        canDownload = true,
+        isLive = false,
+        isUnavailable = false
+    )
+}
+
+private fun String.isLikelyYoutubeUrl(): Boolean =
+    extractYoutubeVideoId() != null ||
+        trim().lowercase(Locale.US).startsWith("http://") ||
+        trim().lowercase(Locale.US).startsWith("https://")
 

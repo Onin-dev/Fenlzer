@@ -76,6 +76,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.material.icons.rounded.Close
 
 
+
 @Composable
 fun ImportScreen(
     state: LocalImportUiState,
@@ -103,7 +104,7 @@ fun ImportScreen(
     onClearYoutubeResult: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var selectedImportSectionName by rememberSaveable { mutableStateOf(ImportSection.DOWNLOAD_YOUTUBE.name) }
+    var selectedImportSectionName by rememberSaveable { mutableStateOf(ImportSection.HOME.name) }
     val selectedImportSection = selectedImportSectionName.importSectionOrDefault()
     val scrollState = rememberScrollState()
 
@@ -116,15 +117,20 @@ fun ImportScreen(
             .testTag("importScreen"),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        ImportSectionTabs(
-            selectedSection = selectedImportSection,
-            activeImportCount = youtubeState.activeJobs.size,
-            historyCount = youtubeState.history.size,
-            onSelected = { selectedImportSectionName = it.name }
-        )
-
         when (selectedImportSection) {
+            ImportSection.HOME -> {
+                ImportHomePanel(
+                    activeImportCount = youtubeState.activeJobs.size,
+                    historyCount = youtubeState.history.size,
+                    onOpenSection = { selectedImportSectionName = it.name }
+                )
+            }
+
             ImportSection.DEVICE -> {
+                ImportDetailHeader(
+                    title = ImportSection.DEVICE.label,
+                    onBack = { selectedImportSectionName = ImportSection.HOME.name }
+                )
                 DeviceImportPanel(
                     state = state,
                     onImportFromDevice = onImportFromDevice,
@@ -136,6 +142,10 @@ fun ImportScreen(
             }
 
             ImportSection.DOWNLOAD_YOUTUBE -> {
+                ImportDetailHeader(
+                    title = ImportSection.DOWNLOAD_YOUTUBE.label,
+                    onBack = { selectedImportSectionName = ImportSection.HOME.name }
+                )
                 YoutubeSearchPanel(
                     state = youtubeState,
                     onQueryChanged = onYoutubeQueryChanged,
@@ -145,6 +155,10 @@ fun ImportScreen(
             }
 
             ImportSection.PLAYLIST -> {
+                ImportDetailHeader(
+                    title = ImportSection.PLAYLIST.label,
+                    onBack = { selectedImportSectionName = ImportSection.HOME.name }
+                )
                 YoutubePlaylistPanel(
                     state = youtubeState,
                     onUrlChanged = onYoutubePlaylistUrlChanged,
@@ -156,17 +170,35 @@ fun ImportScreen(
                 )
             }
 
-            ImportSection.ACTIVITY -> {
-                ImportActivitySectionPanel(
-                    youtubeState = youtubeState,
-                    onCancelYoutubeImport = onCancelYoutubeImport,
-                    onRetryYoutubeImport = onRetryYoutubeImport,
-                    onMoveYoutubeImport = onMoveYoutubeImport,
-                    onHistoryFilterChanged = onHistoryFilterChanged,
-                    onClearYoutubeHistory = onClearYoutubeHistory,
-                    onRetryYoutubeHistoryItem = onRetryYoutubeHistoryItem,
+            ImportSection.ACTIVE_IMPORTS -> {
+                ImportDetailHeader(
+                    title = ImportSection.ACTIVE_IMPORTS.label,
+                    onBack = { selectedImportSectionName = ImportSection.HOME.name }
+                )
+                ActiveImportsPanel(
+                    activeJobs = youtubeState.activeJobs,
+                    latestResult = youtubeState.lastImportResult,
+                    importError = youtubeState.importError,
+                    onCancelImport = onCancelYoutubeImport,
+                    onRetryImport = onRetryYoutubeImport,
+                    onMoveImport = onMoveYoutubeImport,
                     onOpenSongDetails = onOpenSongDetails,
                     onClearYoutubeResult = onClearYoutubeResult
+                )
+            }
+
+            ImportSection.HISTORY -> {
+                ImportDetailHeader(
+                    title = ImportSection.HISTORY.label,
+                    onBack = { selectedImportSectionName = ImportSection.HOME.name }
+                )
+                ImportHistoryPanel(
+                    history = youtubeState.history,
+                    selectedFilter = youtubeState.historyFilter,
+                    onFilterChanged = onHistoryFilterChanged,
+                    onClearHistory = onClearYoutubeHistory,
+                    onRetryHistoryItem = onRetryYoutubeHistoryItem,
+                    onOpenSongDetails = onOpenSongDetails
                 )
             }
         }
@@ -174,75 +206,136 @@ fun ImportScreen(
 }
 
 private enum class ImportSection(
-    val label: String
+    val label: String,
+    val description: String
 ) {
-    DEVICE("Import From Device"),
-    DOWNLOAD_YOUTUBE("Download From YouTube"),
-    PLAYLIST("Import YouTube Playlist"),
-    ACTIVITY("Active Imports / History")
-}
-
-private enum class ImportActivitySubsection(
-    val label: String
-) {
-    ACTIVE("Active Imports"),
-    HISTORY("Import History")
+    HOME("Import", "Choose an import action."),
+    DEVICE("Import From Device", "Choose local audio files stored on this device."),
+    DOWNLOAD_YOUTUBE("Download From YouTube", "Search YouTube or paste a video URL to fetch a single song."),
+    PLAYLIST("Import YouTube Playlist", "Preview a playlist and import selected songs."),
+    ACTIVE_IMPORTS("Active Imports", "View, cancel, retry, or reorder current YouTube imports."),
+    HISTORY("Import History", "Review previous local and YouTube imports.")
 }
 
 private fun String.importSectionOrDefault(): ImportSection =
-    runCatching { ImportSection.valueOf(this) }.getOrDefault(ImportSection.DOWNLOAD_YOUTUBE)
-
-private fun String.importActivitySubsectionOrDefault(): ImportActivitySubsection =
-    runCatching { ImportActivitySubsection.valueOf(this) }.getOrDefault(ImportActivitySubsection.ACTIVE)
+    runCatching { ImportSection.valueOf(this) }.getOrDefault(ImportSection.HOME)
 
 @Composable
-private fun ImportSectionTabs(
-    selectedSection: ImportSection,
+private fun ImportHomePanel(
     activeImportCount: Int,
     historyCount: Int,
-    onSelected: (ImportSection) -> Unit
+    onOpenSection: (ImportSection) -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clipImportPanel()
-            .padding(10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text(
             text = "Import",
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold
         )
+        Text(
+            text = "Choose what you want to import or review.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
 
-        Row(
+        ImportHomeCard(
+            section = ImportSection.DEVICE,
+            trailingLabel = null,
+            onClick = { onOpenSection(ImportSection.DEVICE) }
+        )
+        ImportHomeCard(
+            section = ImportSection.DOWNLOAD_YOUTUBE,
+            trailingLabel = null,
+            onClick = { onOpenSection(ImportSection.DOWNLOAD_YOUTUBE) }
+        )
+        ImportHomeCard(
+            section = ImportSection.PLAYLIST,
+            trailingLabel = null,
+            onClick = { onOpenSection(ImportSection.PLAYLIST) }
+        )
+        ImportHomeCard(
+            section = ImportSection.ACTIVE_IMPORTS,
+            trailingLabel = activeImportCount.takeIf { it > 0 }?.let { "$it active" },
+            onClick = { onOpenSection(ImportSection.ACTIVE_IMPORTS) }
+        )
+        ImportHomeCard(
+            section = ImportSection.HISTORY,
+            trailingLabel = historyCount.takeIf { it > 0 }?.let { "$it entries" },
+            onClick = { onOpenSection(ImportSection.HISTORY) }
+        )
+    }
+}
+
+@Composable
+private fun ImportHomeCard(
+    section: ImportSection,
+    trailingLabel: String?,
+    onClick: () -> Unit
+) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                .weight(1f)
+                .padding(vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            ImportSection.values().forEach { section ->
-                val label = when (section) {
-                    ImportSection.ACTIVITY -> {
-                        val countLabel = listOf(
-                            activeImportCount.takeIf { it > 0 }?.let { "$it active" },
-                            historyCount.takeIf { it > 0 }?.let { "$it history" }
-                        ).filterNotNull().joinToString(", ")
-                        if (countLabel.isBlank()) section.label else "${section.label} ($countLabel)"
-                    }
-                    else -> section.label
-                }
-                if (section == selectedSection) {
-                    Button(onClick = { onSelected(section) }) {
-                        Text(text = label)
-                    }
-                } else {
-                    OutlinedButton(onClick = { onSelected(section) }) {
-                        Text(text = label)
-                    }
-                }
-            }
+            Text(
+                text = section.label,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = section.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
         }
+        if (trailingLabel != null) {
+            Text(
+                text = trailingLabel,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 8.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ImportDetailHeader(
+    title: String,
+    onBack: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clipImportPanel()
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        TextButton(onClick = onBack) {
+            Text(text = "Back")
+        }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 
@@ -262,11 +355,6 @@ private fun DeviceImportPanel(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text(
-            text = "Import From Device",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold
-        )
         Text(
             text = "Choose audio files stored on this device. Fenlzer imports them into private app storage.",
             style = MaterialTheme.typography.bodySmall,
@@ -296,84 +384,6 @@ private fun DeviceImportPanel(
                 onOpenSongDetails = onOpenSongDetails,
                 onClearResult = onClearResult
             )
-        }
-    }
-}
-
-@Composable
-private fun ImportActivitySectionPanel(
-    youtubeState: YoutubeImportUiState,
-    onCancelYoutubeImport: (String) -> Unit,
-    onRetryYoutubeImport: (String) -> Unit,
-    onMoveYoutubeImport: (String, Int) -> Unit,
-    onHistoryFilterChanged: (ImportHistoryFilter) -> Unit,
-    onClearYoutubeHistory: () -> Unit,
-    onRetryYoutubeHistoryItem: (ImportHistoryUiItem) -> Unit,
-    onOpenSongDetails: (String) -> Unit,
-    onClearYoutubeResult: () -> Unit
-) {
-    var selectedSubsectionName by rememberSaveable { mutableStateOf(ImportActivitySubsection.ACTIVE.name) }
-    val selectedSubsection = selectedSubsectionName.importActivitySubsectionOrDefault()
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clipImportPanel()
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Text(
-            text = "Active Imports / Import History",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold
-        )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            ImportActivitySubsection.values().forEach { subsection ->
-                val label = when (subsection) {
-                    ImportActivitySubsection.ACTIVE -> "${subsection.label} (${youtubeState.activeJobs.size})"
-                    ImportActivitySubsection.HISTORY -> "${subsection.label} (${youtubeState.history.size})"
-                }
-                if (subsection == selectedSubsection) {
-                    Button(onClick = { selectedSubsectionName = subsection.name }) {
-                        Text(text = label)
-                    }
-                } else {
-                    OutlinedButton(onClick = { selectedSubsectionName = subsection.name }) {
-                        Text(text = label)
-                    }
-                }
-            }
-        }
-
-        when (selectedSubsection) {
-            ImportActivitySubsection.ACTIVE -> {
-                ActiveImportsPanel(
-                    activeJobs = youtubeState.activeJobs,
-                    latestResult = youtubeState.lastImportResult,
-                    importError = youtubeState.importError,
-                    onCancelImport = onCancelYoutubeImport,
-                    onRetryImport = onRetryYoutubeImport,
-                    onMoveImport = onMoveYoutubeImport,
-                    onOpenSongDetails = onOpenSongDetails,
-                    onClearYoutubeResult = onClearYoutubeResult
-                )
-            }
-
-            ImportActivitySubsection.HISTORY -> {
-                ImportHistoryPanel(
-                    history = youtubeState.history,
-                    selectedFilter = youtubeState.historyFilter,
-                    onFilterChanged = onHistoryFilterChanged,
-                    onClearHistory = onClearYoutubeHistory,
-                    onRetryHistoryItem = onRetryYoutubeHistoryItem,
-                    onOpenSongDetails = onOpenSongDetails
-                )
-            }
         }
     }
 }
