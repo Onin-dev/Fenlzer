@@ -37,7 +37,9 @@ fun EmptyMiniPlayer(
     modifier: Modifier = Modifier
 ) {
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("emptyMiniPlayer"),
         tonalElevation = 3.dp,
         color = MaterialTheme.colorScheme.surface
     ) {
@@ -83,7 +85,8 @@ fun EmptyMiniPlayer(
                             Text(
                                 text = "Private mode",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.secondary
+                                color = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.testTag("emptyMiniPlayerPrivateModeIndicator")
                             )
                         }
                     }
@@ -94,11 +97,13 @@ fun EmptyMiniPlayer(
                 MiniPlayerIconButton(Icons.Rounded.SkipNext, "Next")
                 MiniPlayerIconButton(Icons.Rounded.MoreVert, "More")
             }
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(2.dp)
                     .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .testTag("emptyMiniPlayerInactiveProgress")
             )
         }
     }

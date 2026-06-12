@@ -21,6 +21,7 @@ import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.Snooze
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -82,7 +83,9 @@ fun MiniPlayer(
     val displayedPosition = if (isSeeking) seekValue.toLong() else playbackState.playbackPositionMs
 
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("miniPlayer"),
         tonalElevation = 3.dp,
         color = MaterialTheme.colorScheme.surface
     ) {
@@ -133,21 +136,20 @@ fun MiniPlayer(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        Text(
-                            text = if (privateModeEnabled) {
-                                "${currentItem.artist} - Private mode"
-                            } else {
-                                currentItem.artist
-                            },
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (privateModeEnabled) {
-                                MaterialTheme.colorScheme.secondary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = currentItem.artist,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            if (privateModeEnabled) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                MiniStatusBadge(text = "Private", testTag = "miniPlayerPrivateModeIndicator")
+                            }
+                        }
                     }
                 }
 
@@ -183,9 +185,7 @@ fun MiniPlayer(
                 ) {
                     DropdownMenuItem(
                         text = { Text(text = "Open Queue") },
-                        leadingIcon = {
-                            Icon(imageVector = Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = null)
-                        },
+                        leadingIcon = { Icon(imageVector = Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = null) },
                         onClick = {
                             menuExpanded = false
                             onOpenQueue()
@@ -214,6 +214,7 @@ fun MiniPlayer(
                     )
                     DropdownMenuItem(
                         text = { Text(text = "Sleep Timer") },
+                        leadingIcon = { Icon(imageVector = Icons.Rounded.Snooze, contentDescription = null) },
                         onClick = {
                             menuExpanded = false
                             onOpenSleepTimer()
@@ -238,6 +239,7 @@ fun MiniPlayer(
                         .fillMaxWidth()
                         .height(16.dp)
                         .padding(horizontal = 0.dp)
+                        .testTag("miniPlayerSeekbar")
                 )
             } else {
                 LinearProgressIndicator(
@@ -245,8 +247,27 @@ fun MiniPlayer(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(2.dp)
+                        .testTag("miniPlayerInactiveProgress")
                 )
             }
         }
     }
+}
+
+@Composable
+private fun MiniStatusBadge(
+    text: String,
+    testTag: String
+) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSecondaryContainer,
+        modifier = Modifier
+            .clip(MaterialTheme.shapes.extraSmall)
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .padding(horizontal = 5.dp, vertical = 1.dp)
+            .testTag(testTag),
+        maxLines = 1
+    )
 }

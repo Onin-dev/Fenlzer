@@ -40,6 +40,8 @@ import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Snooze
 import androidx.compose.material.icons.rounded.Speaker
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -102,9 +104,10 @@ fun FullscreenPlayer(
     onCancelSleepTimer: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val isLandscape =
-        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     var showSleepSheet by remember { mutableStateOf(false) }
+    var fullscreenDragX by remember { mutableFloatStateOf(0f) }
+    var fullscreenDragY by remember { mutableFloatStateOf(0f) }
 
     if (showSleepSheet) {
         SleepTimerSheet(
@@ -121,7 +124,27 @@ fun FullscreenPlayer(
     Surface(
         modifier = modifier
             .fillMaxSize()
-            .testTag("fullscreenPlayer"),
+            .testTag("fullscreenPlayer")
+            .pointerInput(playbackState.currentItem?.queueItemId) {
+                detectDragGestures(
+                    onDrag = { _, dragAmount ->
+                        fullscreenDragX += dragAmount.x
+                        fullscreenDragY += dragAmount.y
+                    },
+                    onDragEnd = {
+                        val verticalSwipe = fullscreenDragY > 170f && abs(fullscreenDragY) > abs(fullscreenDragX) * 1.25f
+                        if (verticalSwipe) {
+                            onMinimize()
+                        }
+                        fullscreenDragX = 0f
+                        fullscreenDragY = 0f
+                    },
+                    onDragCancel = {
+                        fullscreenDragX = 0f
+                        fullscreenDragY = 0f
+                    }
+                )
+            },
         color = MaterialTheme.colorScheme.background
     ) {
         if (isLandscape) {
@@ -141,6 +164,7 @@ fun FullscreenPlayer(
                         .weight(0.45f)
                         .fillMaxHeight()
                 )
+
                 PlayerControlsColumn(
                     playbackState = playbackState,
                     privateModeEnabled = privateModeEnabled,
@@ -172,6 +196,7 @@ fun FullscreenPlayer(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 PlayerControlsHeader(onMinimize = onMinimize)
+
                 PlayerArtwork(
                     playbackState = playbackState,
                     onPrevious = onPrevious,
@@ -182,6 +207,7 @@ fun FullscreenPlayer(
                         .aspectRatio(1f)
                         .padding(vertical = 14.dp)
                 )
+
                 PlayerControlsColumn(
                     playbackState = playbackState,
                     privateModeEnabled = privateModeEnabled,
@@ -216,6 +242,7 @@ private fun PlayerControlsHeader(onMinimize: () -> Unit) {
         IconButton(onClick = onMinimize) {
             Icon(imageVector = Icons.Rounded.ArrowDownward, contentDescription = "Minimize player")
         }
+
         Spacer(modifier = Modifier.weight(1f))
     }
 }
@@ -236,6 +263,7 @@ private fun PlayerArtwork(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
+            .testTag("fullscreenPlayerArtwork")
             .pointerInput(currentItem?.queueItemId) {
                 detectDragGestures(
                     onDrag = { change, dragAmount ->
@@ -246,8 +274,8 @@ private fun PlayerArtwork(
                     onDragEnd = {
                         when {
                             dragY > 140f && abs(dragY) > abs(dragX) -> onMinimize()
-                            dragX > 140f -> onPrevious()
-                            dragX < -140f -> onNext()
+                            dragX > 140f && abs(dragX) > abs(dragY) -> onPrevious()
+                            dragX < -140f && abs(dragX) > abs(dragY) -> onNext()
                         }
                         dragX = 0f
                         dragY = 0f
@@ -322,17 +350,28 @@ private fun PlayerControlsColumn(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
-        Text(
-            text = when {
-                currentItem == null -> "Import songs to start listening"
-                privateModeEnabled -> "${currentItem.artist} - Private mode"
-                else -> currentItem.artist
-            },
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                text = currentItem?.artist?.takeIf { it.isNotBlank() } ?: "Unknown artist",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (privateModeEnabled) {
+                    PlaybackChip(text = "Private mode", testTag = "fullscreenPrivateModeIndicator")
+                }
+                if (playbackState.sleepTimerState.active) {
+                    PlaybackChip(
+                        text = playbackState.sleepTimerState.displayText(),
+                        testTag = "fullscreenSleepTimerIndicator"
+                    )
+                }
+            }
+        }
 
         Slider(
             value = position.coerceIn(0L, duration.coerceAtLeast(1L)).toFloat(),
@@ -346,8 +385,11 @@ private fun PlayerControlsColumn(
             },
             valueRange = 0f..duration.coerceAtLeast(1L).toFloat(),
             enabled = currentItem != null && duration > 0L,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("fullscreenSeekbar")
         )
+
         Row(modifier = Modifier.fillMaxWidth()) {
             Text(text = position.formatDuration(), style = MaterialTheme.typography.labelMedium)
             Spacer(modifier = Modifier.weight(1f))
@@ -432,7 +474,15 @@ private fun PlayerControlsColumn(
                 Icon(imageVector = Icons.Rounded.Speaker, contentDescription = "Audio output")
             }
             IconButton(onClick = onOpenSleepTimer, enabled = currentItem != null) {
-                Icon(imageVector = Icons.Rounded.Snooze, contentDescription = "Sleep timer")
+                Icon(
+                    imageVector = Icons.Rounded.Snooze,
+                    contentDescription = "Sleep timer",
+                    tint = if (playbackState.sleepTimerState.active) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    }
+                )
             }
             IconButton(onClick = onOpenSongDetails, enabled = currentItem != null) {
                 Icon(imageVector = Icons.Rounded.BarChart, contentDescription = "Song statistics")
@@ -461,17 +511,13 @@ private fun PlayerControlsColumn(
                     )
                     DropdownMenuItem(
                         text = { Text(text = "Share") },
-                        leadingIcon = {
-                            Icon(imageVector = Icons.Rounded.Share, contentDescription = null)
-                        },
+                        leadingIcon = { Icon(imageVector = Icons.Rounded.Share, contentDescription = null) },
                         enabled = false,
                         onClick = { }
                     )
                     DropdownMenuItem(
                         text = { Text(text = "Sleep Timer") },
-                        leadingIcon = {
-                            Icon(imageVector = Icons.Rounded.Snooze, contentDescription = null)
-                        },
+                        leadingIcon = { Icon(imageVector = Icons.Rounded.Snooze, contentDescription = null) },
                         onClick = {
                             menuExpanded = false
                             onOpenSleepTimer()
@@ -479,9 +525,7 @@ private fun PlayerControlsColumn(
                     )
                     DropdownMenuItem(
                         text = { Text(text = "Delete from Fenlzer") },
-                        leadingIcon = {
-                            Icon(imageVector = Icons.Rounded.Delete, contentDescription = null)
-                        },
+                        leadingIcon = { Icon(imageVector = Icons.Rounded.Delete, contentDescription = null) },
                         onClick = {
                             menuExpanded = false
                             onDeleteFromFenlzer()
@@ -497,10 +541,37 @@ private fun PlayerControlsColumn(
 }
 
 @Composable
+private fun PlaybackChip(
+    text: String,
+    testTag: String
+) {
+    AssistChip(
+        onClick = { },
+        label = {
+            Text(
+                text = text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        },
+        enabled = false,
+        colors = AssistChipDefaults.assistChipColors(
+            disabledLabelColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            disabledContainerColor = MaterialTheme.colorScheme.secondaryContainer
+        ),
+        modifier = Modifier.testTag(testTag)
+    )
+}
+
+@Composable
 private fun PlaybackContext(playbackState: PlaybackUiState) {
     val nextSong = playbackState.queueItems
         .firstOrNull { it.position > (playbackState.currentItem?.position ?: Int.MAX_VALUE) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+
+    Column(
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.testTag("fullscreenPlaybackContext")
+    ) {
         ContextLine(label = "Playing from", value = playbackState.sourceLabel)
         ContextLine(label = "Next song", value = nextSong?.displayTitle ?: "End of queue")
         ContextLine(label = "Repeat", value = playbackState.repeatMode.lowercase().replaceFirstChar { it.titlecase() })
@@ -551,7 +622,9 @@ private fun SleepTimerSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        modifier = Modifier.imePadding()
+        modifier = Modifier
+            .imePadding()
+            .testTag("sleepTimerSheet")
     ) {
         Column(
             modifier = Modifier
@@ -570,6 +643,7 @@ private fun SleepTimerSheet(
                     color = MaterialTheme.colorScheme.secondary
                 )
             }
+
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = {
@@ -599,6 +673,7 @@ private fun SleepTimerSheet(
                     Text(text = "60 min")
                 }
             }
+
             OutlinedButton(
                 onClick = {
                     onStartEndOfSong()
@@ -617,6 +692,7 @@ private fun SleepTimerSheet(
             ) {
                 Text(text = "End of queue")
             }
+
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -643,6 +719,7 @@ private fun SleepTimerSheet(
                     Text(text = "Start")
                 }
             }
+
             if (playbackState.sleepTimerState.active) {
                 TextButton(
                     onClick = {
@@ -654,6 +731,7 @@ private fun SleepTimerSheet(
                     Text(text = "Cancel timer")
                 }
             }
+
             Spacer(modifier = Modifier.height(16.dp))
         }
     }
