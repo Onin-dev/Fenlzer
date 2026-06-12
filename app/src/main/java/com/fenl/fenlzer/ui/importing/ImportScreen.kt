@@ -77,6 +77,8 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material.icons.rounded.Sync
 
 
 
@@ -228,126 +230,111 @@ private fun String.importSectionOrDefault(): ImportSection =
     runCatching { ImportSection.valueOf(this) }.getOrDefault(ImportSection.HOME)
 
 
+
 @Composable
 private fun ImportHomePanel(
     activeImportCount: Int,
     historyCount: Int,
     onOpenSection: (ImportSection) -> Unit
 ) {
-    val entries = listOf(
-        ImportHomeEntry(
-            section = ImportSection.DEVICE,
-            trailingLabel = null
-        ),
-        ImportHomeEntry(
-            section = ImportSection.DOWNLOAD_YOUTUBE,
-            trailingLabel = null
-        ),
-        ImportHomeEntry(
-            section = ImportSection.PLAYLIST,
-            trailingLabel = null
-        ),
-        ImportHomeEntry(
-            section = ImportSection.ACTIVE_IMPORTS,
-            trailingLabel = activeImportCount.takeIf { it > 0 }?.let { "$it active" }
-        ),
-        ImportHomeEntry(
-            section = ImportSection.HISTORY,
-            trailingLabel = historyCount.takeIf { it > 0 }?.let { "$it entries" }
-        )
-    )
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clipImportPanel()
             .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text(
             text = "Import",
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold
         )
-        Text(
-            text = "Choose what you want to import or review.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+
+        ImportHomeSectionButton(
+            title = ImportSection.DEVICE.label,
+            icon = {
+                Icon(
+                    imageVector = Icons.Rounded.FileDownload,
+                    contentDescription = null
+                )
+            },
+            onClick = { onOpenSection(ImportSection.DEVICE) }
         )
 
-        entries.chunked(2).forEach { rowEntries ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                rowEntries.forEach { entry ->
-                    ImportHomeTile(
-                        entry = entry,
-                        onClick = { onOpenSection(entry.section) },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                if (rowEntries.size == 1) {
-                    Spacer(modifier = Modifier.weight(1f))
-                }
-            }
-        }
+        ImportHomeSectionButton(
+            title = ImportSection.DOWNLOAD_YOUTUBE.label,
+            icon = {
+                Icon(
+                    imageVector = Icons.Rounded.Search,
+                    contentDescription = null
+                )
+            },
+            onClick = { onOpenSection(ImportSection.DOWNLOAD_YOUTUBE) }
+        )
+
+        ImportHomeSectionButton(
+            title = ImportSection.PLAYLIST.label,
+            icon = {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                    contentDescription = null
+                )
+            },
+            onClick = { onOpenSection(ImportSection.PLAYLIST) }
+        )
+
+        ImportHomeSectionButton(
+            title = ImportSection.ACTIVE_IMPORTS.label,
+            icon = {
+                Icon(
+                    imageVector = Icons.Rounded.Sync,
+                    contentDescription = null
+                )
+            },
+            onClick = { onOpenSection(ImportSection.ACTIVE_IMPORTS) }
+        )
+
+        ImportHomeSectionButton(
+            title = ImportSection.HISTORY.label,
+            icon = {
+                Icon(
+                    imageVector = Icons.Rounded.History,
+                    contentDescription = null
+                )
+            },
+            onClick = { onOpenSection(ImportSection.HISTORY) }
+        )
     }
 }
 
-private data class ImportHomeEntry(
-    val section: ImportSection,
-    val trailingLabel: String?
-)
-
 @Composable
-private fun ImportHomeTile(
-    entry: ImportHomeEntry,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
+private fun ImportHomeSectionButton(
+    title: String,
+    icon: @Composable () -> Unit,
+    onClick: () -> Unit
 ) {
-    Surface(
-        modifier = modifier
-            .heightIn(min = 92.dp)
-            .clipImportPanel()
-            .clickable(onClick = onClick)
-            .testTag("importHomeTile_${entry.section.name}"),
-        tonalElevation = 1.dp,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f)
+    OutlinedButton(
+        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+        Box(
+            modifier = Modifier.size(28.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = entry.section.label,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                entry.trailingLabel?.let { label ->
-                    Text(
-                        text = label,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        modifier = Modifier.padding(start = 6.dp)
-                    )
-                }
-            }
-            Text(
-                text = entry.section.description,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis
-            )
+            icon()
         }
+        Spacer(modifier = Modifier.width(14.dp))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 
