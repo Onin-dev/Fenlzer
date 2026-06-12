@@ -52,6 +52,7 @@ fun DragStepHandle(
                 onDragEnd
             ) {
                 if (!effectiveEnabled) return@pointerInput
+
                 detectDragGestures(
                     onDragStart = {
                         accumulatedDrag = 0f
@@ -70,8 +71,10 @@ fun DragStepHandle(
                     val liveDrag = onDragDelta
                     if (liveDrag != null) {
                         val deltaY = dragAmount.y
-                        if ((deltaY < 0f && effectiveCanMoveUp) || (deltaY > 0f && effectiveCanMoveDown)) {
-                            liveDrag(deltaY)
+                        when {
+                            deltaY < 0f && effectiveCanMoveUp -> liveDrag(deltaY)
+                            deltaY > 0f && effectiveCanMoveDown -> liveDrag(deltaY)
+                            else -> Unit
                         }
                     } else {
                         accumulatedDrag += dragAmount.y

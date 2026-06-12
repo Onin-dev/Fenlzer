@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -138,9 +139,14 @@ fun QueueScreen(
     )
 
     val currentVisibleIndex = visibleItems.indexOfFirst { it.queueItemId == liveCurrentQueueItemId }
-fun updateDragOffset(newOffset: Float) {
+
+    fun minDragOffsetPx(): Float = if (dragStartIndex >= 0) -dragStartIndex * rowHeightPx else 0f
+
+    fun maxDragOffsetPx(): Float = if (dragStartIndex >= 0) (baseItems.lastIndex - dragStartIndex) * rowHeightPx else 0f
+
+    fun updateDragOffsetSafely(newOffset: Float) {
         if (draggingQueueItemId == null || dragStartIndex !in baseItems.indices || baseItems.isEmpty()) return
-        dragOffsetPx = newOffset.coerceIn(maxDragUpPx(), maxDragDownPx())
+        dragOffsetPx = newOffset.coerceIn(minDragOffsetPx(), maxDragOffsetPx())
         dragTargetIndex = (dragStartIndex + (dragOffsetPx / rowHeightPx).toInt())
             .coerceIn(0, baseItems.lastIndex)
     }
@@ -200,20 +206,13 @@ fun updateDragOffset(newOffset: Float) {
         dragTargetIndex = index
         dragOffsetPx = 0f
     }
-fun updateDragOffsetSafely(newOffset: Float) {
-        if (draggingQueueItemId == null || dragStartIndex !in baseItems.indices || baseItems.isEmpty()) return
-        dragOffsetPx = newOffset.coerceIn(maxDragUpPx(), maxDragDownPx())
-        dragTargetIndex = (dragStartIndex + (dragOffsetPx / rowHeightPx).toInt())
-            .coerceIn(0, baseItems.lastIndex)
-    }
 
     fun dragBy(deltaY: Float) {
         if (draggingQueueItemId == null || dragStartIndex !in baseItems.indices || baseItems.isEmpty()) return
 
-        val atFirstSlot = dragTargetIndex <= 0 && dragOffsetPx <= maxDragUpPx()
-        val atLastSlot = dragTargetIndex >= baseItems.lastIndex && dragOffsetPx >= maxDragDownPx()
-
-        if ((deltaY < 0f && atFirstSlot) || (deltaY > 0f && atLastSlot)) {
+        val canMoveUp = dragOffsetPx > minDragOffsetPx()
+        val canMoveDown = dragOffsetPx < maxDragOffsetPx()
+        if ((deltaY < 0f && !canMoveUp) || (deltaY > 0f && !canMoveDown)) {
             updateDragOffsetSafely(dragOffsetPx)
             return
         }
@@ -225,8 +224,8 @@ fun updateDragOffsetSafely(newOffset: Float) {
             listState = listState,
             dragTargetIndex = dragTargetIndex,
             deltaY = deltaY,
-            canScrollUp = dragTargetIndex > 0 || dragOffsetPx > maxDragUpPx(),
-            canScrollDown = dragTargetIndex < baseItems.lastIndex || dragOffsetPx < maxDragDownPx(),
+            canScrollUp = dragTargetIndex > 0 || dragOffsetPx > minDragOffsetPx(),
+            canScrollDown = dragTargetIndex < baseItems.lastIndex || dragOffsetPx < maxDragOffsetPx(),
             onScrolled = { consumedScrollPx ->
                 updateDragOffsetSafely(dragOffsetPx + consumedScrollPx)
             }
@@ -307,7 +306,11 @@ fun updateDragOffsetSafely(newOffset: Float) {
                                 isCurrent = isCurrent,
                                 isQueueDragActive = draggingQueueItemId != null,
                                 isDragging = isDragging,
-                                dragOffsetPx = if (isDragging) dragOffsetPx - ((dragTargetIndex - dragStartIndex) * rowHeightPx) else 0f,
+                                dragOffsetPx = if (isDragging) {
+                                    dragOffsetPx - ((dragTargetIndex - dragStartIndex) * rowHeightPx)
+                                } else {
+                                    0f
+                                },
                                 canMoveUp = !isCurrent && index > 0,
                                 canMoveDown = !isCurrent && index < visibleItems.lastIndex,
                                 onRequestUndoableRemoval = ::requestUndoableRemoval,
@@ -400,6 +403,7 @@ private fun autoScrollQueueIfNeeded(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DismissibleQueueSnackbarHost(
     snackbarHostState: SnackbarHostState,
