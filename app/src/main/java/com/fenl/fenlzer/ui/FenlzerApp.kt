@@ -99,14 +99,14 @@ fun FenlzerApp(
         LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     fun navigateToMainTab(tab: FenlzerRoute) {
-        navController.navigate(tab.route) {
-            popUpTo(navController.graph.findStartDestination().id) {
-                saveState = true
-            }
-            launchSingleTop = true
-            restoreState = true
-        }
-    }
+ navController.navigate(tab.route) {
+ popUpTo(navController.graph.findStartDestination().id) {
+ saveState = tab != FenlzerRoute.Home
+ }
+ launchSingleTop = true
+ restoreState = tab != FenlzerRoute.Home
+ }
+ }
 
     if (isLandscape && currentRoute !in setOf(FenlzerRoute.Player.route, FenlzerRoute.Queue.route)) {
         Row(modifier = modifier.fillMaxSize()) {

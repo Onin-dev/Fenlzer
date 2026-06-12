@@ -92,6 +92,7 @@ import com.fenl.fenlzer.domain.text.SearchNormalizer
 import java.util.Locale
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.material.icons.rounded.Close
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -202,7 +203,6 @@ fun HomeScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .widthIn(max = 1180.dp)
             .padding(
                 horizontal = if (isLandscape) 12.dp else 16.dp,
                 vertical = if (isLandscape) 8.dp else 12.dp
@@ -258,7 +258,7 @@ fun HomeScreen(
             Spacer(modifier = Modifier.height(if (isLandscape) 4.dp else 8.dp))
         }
 
-        if (isLandscape && !selectionMode && tracks.isNotEmpty() && mode == HomeMode.SONGS) {
+        if (false && isLandscape && !selectionMode && tracks.isNotEmpty() && mode == HomeMode.SONGS) {
             LandscapeFilterStrip(
                 filter = filter,
                 onFilterSelected = { filter = it },
@@ -383,10 +383,17 @@ private fun HomeTopControls(
                 Icon(imageVector = Icons.Rounded.Search, contentDescription = null)
             },
             trailingIcon = {
-                IconButton(onClick = onOptions) {
-                    Icon(imageVector = Icons.Rounded.FilterList, contentDescription = "Library options")
-                }
-            },
+ Row(verticalAlignment = Alignment.CenterVertically) {
+ if (searchQuery.isNotBlank()) {
+ IconButton(onClick = { onSearchChanged("") }) {
+ Icon(imageVector = Icons.Rounded.Close, contentDescription = "Clear search")
+ }
+ }
+ IconButton(onClick = onOptions) {
+ Icon(imageVector = Icons.Rounded.FilterList, contentDescription = "Library options")
+ }
+ }
+ },
             modifier = Modifier.fillMaxWidth()
         )
     }
@@ -959,7 +966,7 @@ private fun CompactSearchField(
             color = MaterialTheme.colorScheme.onSurface
         ),
         modifier = modifier
-            .height(40.dp)
+            .height(44.dp)
             .border(
                 width = 1.dp,
                 color = MaterialTheme.colorScheme.outline,
