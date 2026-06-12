@@ -73,6 +73,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import coil3.compose.AsyncImage
 import com.fenl.fenlzer.playback.PlaybackUiState
 import com.fenl.fenlzer.playback.QueueRepeatMode
@@ -108,6 +112,59 @@ fun FullscreenPlayer(
     var showSleepSheet by remember { mutableStateOf(false) }
     var fullscreenDragX by remember { mutableFloatStateOf(0f) }
     var fullscreenDragY by remember { mutableFloatStateOf(0f) }
+
+    val swipeDownToMinimizeConnection = remember(onMinimize) {
+        object : NestedScrollConnection {
+            private var accumulatedDownPx = 0f
+            private var accumulatedAbsHorizontalPx = 0f
+
+            override fun onPreScroll(
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                if (source == NestedScrollSource.Drag) {
+                    if (available.y > 0f) {
+                        accumulatedDownPx += available.y
+                        accumulatedAbsHorizontalPx += abs(available.x)
+                    } else if (available.y < 0f) {
+                        accumulatedDownPx = 0f
+                        accumulatedAbsHorizontalPx = 0f
+                    }
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                if (source == NestedScrollSource.Drag) {
+                    val totalY = consumed.y + available.y
+                    val totalX = consumed.x + available.x
+                    if (totalY > 0f) {
+                        accumulatedDownPx += totalY
+                        accumulatedAbsHorizontalPx += abs(totalX)
+                    } else if (totalY < 0f) {
+                        accumulatedDownPx = 0f
+                        accumulatedAbsHorizontalPx = 0f
+                    }
+                }
+                return Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
+                val shouldMinimize = accumulatedDownPx > 150f &&
+                    accumulatedDownPx > accumulatedAbsHorizontalPx * 1.2f
+                accumulatedDownPx = 0f
+                accumulatedAbsHorizontalPx = 0f
+                if (shouldMinimize) {
+                    onMinimize()
+                }
+                return androidx.compose.ui.unit.Velocity.Zero
+            }
+        }
+    }
 
     if (showSleepSheet) {
         SleepTimerSheet(
@@ -151,6 +208,7 @@ fun FullscreenPlayer(
             Row(
                 modifier = Modifier
                     .fillMaxSize()
+                    .nestedScroll(swipeDownToMinimizeConnection)
                     .padding(18.dp),
                 horizontalArrangement = Arrangement.spacedBy(24.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -191,6 +249,7 @@ fun FullscreenPlayer(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .nestedScroll(swipeDownToMinimizeConnection)
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 22.dp, vertical = 14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
