@@ -8,10 +8,10 @@ import androidx.compose.ui.unit.dp
  */
 object Dimensions {
     // List and item spacing
-    val LIST_ITEM_SPACING = 4.dp
+    val LIST_ITEM_SPACING = 2.dp
     
     // Thumbnail sizes
-    val TRACK_THUMBNAIL = 56.dp
+    val TRACK_THUMBNAIL = 52.dp
     val MINI_PLAYER_THUMBNAIL = 48.dp
-    val QUEUE_ITEM_THUMBNAIL = 48.dp
+    val QUEUE_ITEM_THUMBNAIL = 46.dp
 }

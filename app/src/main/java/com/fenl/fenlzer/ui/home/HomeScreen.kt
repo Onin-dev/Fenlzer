@@ -90,7 +90,6 @@ import com.fenl.fenlzer.data.repository.LibraryTrack
 import com.fenl.fenlzer.data.settings.HomeSort
 import com.fenl.fenlzer.domain.text.SearchNormalizer
 import java.util.Locale
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.material.icons.rounded.Close
 
@@ -333,6 +332,7 @@ fun HomeScreen(
     }
 }
 
+
 @Composable
 private fun HomeTopControls(
     searchQuery: String,
@@ -356,6 +356,7 @@ private fun HomeTopControls(
             Icon(imageVector = Icons.Rounded.Settings, contentDescription = "Open settings")
         }
     }
+
     Spacer(modifier = Modifier.height(if (showCompact) 2.dp else 4.dp))
 
     if (showCompact) {
@@ -383,17 +384,12 @@ private fun HomeTopControls(
                 Icon(imageVector = Icons.Rounded.Search, contentDescription = null)
             },
             trailingIcon = {
- Row(verticalAlignment = Alignment.CenterVertically) {
- if (searchQuery.isNotBlank()) {
- IconButton(onClick = { onSearchChanged("") }) {
- Icon(imageVector = Icons.Rounded.Close, contentDescription = "Clear search")
- }
- }
- IconButton(onClick = onOptions) {
- Icon(imageVector = Icons.Rounded.FilterList, contentDescription = "Library options")
- }
- }
- },
+                HomeSearchTrailingIcons(
+                    searchQuery = searchQuery,
+                    onClearSearch = { onSearchChanged("") },
+                    onOptions = onOptions
+                )
+            },
             modifier = Modifier.fillMaxWidth()
         )
     }
@@ -405,6 +401,30 @@ private fun HomeTopControls(
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+@Composable
+private fun HomeSearchTrailingIcons(
+    searchQuery: String,
+    onClearSearch: () -> Unit,
+    onOptions: () -> Unit
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (searchQuery.isNotBlank()) {
+            IconButton(onClick = onClearSearch) {
+                Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = "Clear search"
+                )
+            }
+        }
+        IconButton(onClick = onOptions) {
+            Icon(
+                imageVector = Icons.Rounded.FilterList,
+                contentDescription = "Library options"
+            )
+        }
     }
 }
 
@@ -950,6 +970,7 @@ private fun EmptyListMessage(
     }
 }
 
+
 @Composable
 private fun CompactSearchField(
     value: String,
@@ -957,7 +978,6 @@ private fun CompactSearchField(
     modifier: Modifier = Modifier
 ) {
     val shape = RoundedCornerShape(8.dp)
-
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
@@ -972,7 +992,7 @@ private fun CompactSearchField(
                 color = MaterialTheme.colorScheme.outline,
                 shape = shape
             )
-            .padding(horizontal = 12.dp),
+            .padding(start = 12.dp, end = 6.dp),
         decorationBox = { innerTextField ->
             Row(
                 modifier = Modifier.fillMaxSize(),
@@ -995,6 +1015,20 @@ private fun CompactSearchField(
                         )
                     }
                     innerTextField()
+                }
+                if (value.isNotBlank()) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                    IconButton(
+                        onClick = { onValueChange("") },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "Clear search",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
         }
