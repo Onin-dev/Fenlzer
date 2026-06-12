@@ -139,6 +139,16 @@ fun QueueScreen(
 
     val currentVisibleIndex = visibleItems.indexOfFirst { it.queueItemId == liveCurrentQueueItemId }
 
+    fun maxDragUpPx(): Float = -dragStartIndex * rowHeightPx
+    fun maxDragDownPx(): Float = (baseItems.lastIndex - dragStartIndex) * rowHeightPx
+
+    fun updateDragOffset(newOffset: Float) {
+        if (draggingQueueItemId == null || dragStartIndex !in baseItems.indices || baseItems.isEmpty()) return
+        dragOffsetPx = newOffset.coerceIn(maxDragUpPx(), maxDragDownPx())
+        dragTargetIndex = (dragStartIndex + (dragOffsetPx / rowHeightPx).toInt())
+            .coerceIn(0, baseItems.lastIndex)
+    }
+
     LaunchedEffect(visibleItems.size, liveCurrentQueueItemId) {
         if (!initialCurrentScrollDone && currentVisibleIndex >= 0) {
             listState.scrollToItem(currentVisibleIndex)
@@ -198,22 +208,19 @@ fun QueueScreen(
     fun dragBy(deltaY: Float) {
         if (draggingQueueItemId == null || dragStartIndex !in baseItems.indices || baseItems.isEmpty()) return
 
-        val maxUp = -dragStartIndex * rowHeightPx
-        val maxDown = (baseItems.lastIndex - dragStartIndex) * rowHeightPx
-        val overshoot = rowHeightPx * 0.42f
-        dragOffsetPx = (dragOffsetPx + deltaY).coerceIn(maxUp - overshoot, maxDown + overshoot)
+        updateDragOffset(dragOffsetPx + deltaY)
 
-        val target = (dragStartIndex + (dragOffsetPx / rowHeightPx).toInt())
-            .coerceIn(0, baseItems.lastIndex)
-        if (target != dragTargetIndex) {
-            dragTargetIndex = target
-        }
-
-        maybeAutoScrollQueue(
+        autoScrollQueueIfNeeded(
             scope = scope,
             listState = listState,
             dragTargetIndex = dragTargetIndex,
-            deltaY = deltaY
+            deltaY = deltaY,
+            onScrolled = { consumedScrollPx ->
+                // When the list scrolls, the content underneath the finger moves.
+                // Add the consumed scroll distance to the dragged row translation so
+                // the row remains visually attached to the user's finger.
+                updateDragOffset(dragOffsetPx + consumedScrollPx)
+            }
         )
     }
 
@@ -346,11 +353,12 @@ private fun moveId(
     }
 }
 
-private fun maybeAutoScrollQueue(
+private fun autoScrollQueueIfNeeded(
     scope: CoroutineScope,
     listState: LazyListState,
     dragTargetIndex: Int,
-    deltaY: Float
+    deltaY: Float,
+    onScrolled: (Float) -> Unit
 ) {
     val layoutInfo = listState.layoutInfo
     val visibleInfo = layoutInfo.visibleItemsInfo
@@ -360,9 +368,11 @@ private fun maybeAutoScrollQueue(
     val firstVisible = visibleInfo.first()
     val lastVisible = visibleInfo.last()
 
-    val thresholdPx = (draggedInfo?.size ?: firstVisible.size) * 2.8f
-    val distanceToTop = (draggedInfo?.offset ?: firstVisible.offset) - layoutInfo.viewportStartOffset
-    val distanceToBottom = layoutInfo.viewportEndOffset - ((draggedInfo?.offset ?: lastVisible.offset) + (draggedInfo?.size ?: lastVisible.size))
+    val thresholdPx = (draggedInfo?.size ?: firstVisible.size) * 3.25f
+    val draggedTop = draggedInfo?.offset ?: if (deltaY < 0f) firstVisible.offset else lastVisible.offset
+    val draggedBottom = draggedTop + (draggedInfo?.size ?: firstVisible.size)
+    val distanceToTop = draggedTop - layoutInfo.viewportStartOffset
+    val distanceToBottom = layoutInfo.viewportEndOffset - draggedBottom
 
     val direction = when {
         deltaY < 0f && (distanceToTop < thresholdPx || dragTargetIndex <= firstVisible.index + 1) -> -1f
@@ -371,9 +381,10 @@ private fun maybeAutoScrollQueue(
     }
 
     if (direction != 0f) {
-        val distance = (abs(deltaY) * 3.4f).coerceIn(30f, 140f)
+        val scrollAmount = direction * (abs(deltaY) * 4.6f).coerceIn(44f, 190f)
         scope.launch {
-            listState.scrollBy(direction * distance)
+            val consumed = listState.scrollBy(scrollAmount)
+            onScrolled(consumed)
         }
     }
 }

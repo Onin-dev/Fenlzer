@@ -69,7 +69,10 @@ fun DragStepHandle(
                     change.consume()
                     val liveDrag = onDragDelta
                     if (liveDrag != null) {
-                        liveDrag(dragAmount.y)
+                        val deltaY = dragAmount.y
+                        if ((deltaY < 0f && effectiveCanMoveUp) || (deltaY > 0f && effectiveCanMoveDown)) {
+                            liveDrag(deltaY)
+                        }
                     } else {
                         accumulatedDrag += dragAmount.y
                         if (abs(accumulatedDrag) >= stepThresholdPx) {
