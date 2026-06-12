@@ -205,21 +205,39 @@ fun QueueScreen(
         dragOffsetPx = 0f
     }
 
+    fun maxDragUpPx(): Float = -dragStartIndex * rowHeightPx
+
+    fun maxDragDownPx(): Float = (baseItems.lastIndex - dragStartIndex) * rowHeightPx
+
+    fun updateDragOffsetSafely(newOffset: Float) {
+        if (draggingQueueItemId == null || dragStartIndex !in baseItems.indices || baseItems.isEmpty()) return
+        dragOffsetPx = newOffset.coerceIn(maxDragUpPx(), maxDragDownPx())
+        dragTargetIndex = (dragStartIndex + (dragOffsetPx / rowHeightPx).toInt())
+            .coerceIn(0, baseItems.lastIndex)
+    }
+
     fun dragBy(deltaY: Float) {
         if (draggingQueueItemId == null || dragStartIndex !in baseItems.indices || baseItems.isEmpty()) return
 
-        updateDragOffset(dragOffsetPx + deltaY)
+        val atFirstSlot = dragTargetIndex <= 0 && dragOffsetPx <= maxDragUpPx()
+        val atLastSlot = dragTargetIndex >= baseItems.lastIndex && dragOffsetPx >= maxDragDownPx()
+
+        if ((deltaY < 0f && atFirstSlot) || (deltaY > 0f && atLastSlot)) {
+            updateDragOffsetSafely(dragOffsetPx)
+            return
+        }
+
+        updateDragOffsetSafely(dragOffsetPx + deltaY)
 
         autoScrollQueueIfNeeded(
             scope = scope,
             listState = listState,
             dragTargetIndex = dragTargetIndex,
             deltaY = deltaY,
+            canScrollUp = dragTargetIndex > 0 || dragOffsetPx > maxDragUpPx(),
+            canScrollDown = dragTargetIndex < baseItems.lastIndex || dragOffsetPx < maxDragDownPx(),
             onScrolled = { consumedScrollPx ->
-                // When the list scrolls, the content underneath the finger moves.
-                // Add the consumed scroll distance to the dragged row translation so
-                // the row remains visually attached to the user's finger.
-                updateDragOffset(dragOffsetPx + consumedScrollPx)
+                updateDragOffsetSafely(dragOffsetPx + consumedScrollPx)
             }
         )
     }
@@ -358,6 +376,8 @@ private fun autoScrollQueueIfNeeded(
     listState: LazyListState,
     dragTargetIndex: Int,
     deltaY: Float,
+    canScrollUp: Boolean,
+    canScrollDown: Boolean,
     onScrolled: (Float) -> Unit
 ) {
     val layoutInfo = listState.layoutInfo
@@ -375,8 +395,8 @@ private fun autoScrollQueueIfNeeded(
     val distanceToBottom = layoutInfo.viewportEndOffset - draggedBottom
 
     val direction = when {
-        deltaY < 0f && (distanceToTop < thresholdPx || dragTargetIndex <= firstVisible.index + 1) -> -1f
-        deltaY > 0f && (distanceToBottom < thresholdPx || dragTargetIndex >= lastVisible.index - 1) -> 1f
+        canScrollUp && deltaY < 0f && (distanceToTop < thresholdPx || dragTargetIndex <= firstVisible.index + 1) -> -1f
+        canScrollDown && deltaY > 0f && (distanceToBottom < thresholdPx || dragTargetIndex >= lastVisible.index - 1) -> 1f
         else -> 0f
     }
 
