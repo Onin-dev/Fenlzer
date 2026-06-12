@@ -341,12 +341,17 @@ class QueueRepository(
         val state = queueDao.getQueueState() ?: defaultQueueState()
         val items = queueDao.getQueueItems().sortedBy { it.position }
         val currentId = state.currentQueueItemId
-        val shuffledItems = if (enabled && items.size > 1 && currentId != null) {
-            shuffleAroundCurrent(items, currentId)
+
+        val edited = if (enabled) {
+            QueueListEditor.shuffleUpcoming(
+                existingItems = items,
+                currentQueueItemId = currentId,
+                random = Random(now())
+            )
         } else {
-            items
+            QueueListEditor.markCurrent(items, currentId)
         }
-        val edited = QueueListEditor.markCurrent(shuffledItems, currentId)
+
         val updatedState = state.copy(
             shuffleEnabled = enabled,
             isModified = state.isModified || enabled,
@@ -360,7 +365,7 @@ class QueueRepository(
             currentQueueItemId = edited.currentQueueItemId,
             updatedAt = now()
         )
-        replaceQueue(updatedState, edited.items, null)
+        replaceQueue(updatedState, edited.items, edited.message)
     }
 
 

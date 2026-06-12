@@ -291,14 +291,28 @@ class PlaybackController(
     }
 
     fun toggleShuffle() {
-        scope.launch {
-            val nextShuffle = !mutableUiState.value.shuffleEnabled
-            val result = queueRepository.setShuffleEnabled(nextShuffle)
-            applyQueueResult(result, playWhenReady = false)
-        }
-    }
+    scope.launch {
+        val nextShuffle = !mutableUiState.value.shuffleEnabled
+        val currentPositionMs = mediaController?.currentPosition?.coerceAtLeast(0L)
 
-    fun startSleepTimerDuration(durationMs: Long) {
+        val result = if (nextShuffle) {
+            // Turning shuffle on while a queue is already playing should
+            // immediately shuffle the upcoming queue while keeping the current
+            // song and playback position intact.
+            queueRepository.shuffleUpcoming()
+        } else {
+            queueRepository.setShuffleEnabled(false)
+        }
+
+        applyQueueResult(
+            result = result,
+            playWhenReady = mediaController?.isPlaying == true,
+            forcePositionMs = currentPositionMs
+        )
+    }
+}
+
+fun startSleepTimerDuration(durationMs: Long) {
         sleepTimerController.startDuration(durationMs)
         updateSleepTimerState()
     }
@@ -544,14 +558,30 @@ class PlaybackController(
     }
 
     private fun MediaController.replaceMediaItemIfUriChanged(index: Int, desiredItem: MediaItem) {
-        if (index !in 0 until mediaItemCount) return
-        val currentItem = getMediaItemAt(index)
-        if (currentItem.localConfiguration?.uri != desiredItem.localConfiguration?.uri) {
-            replaceMediaItem(index, desiredItem)
-        }
-    }
+    if (index !in 0 until mediaItemCount) return
 
-    private fun MediaController.indexOfMediaItem(mediaId: String): Int {
+    val currentItem = getMediaItemAt(index)
+    val currentUri = currentItem.localConfiguration?.uri
+    val desiredUri = desiredItem.localConfiguration?.uri
+    if (currentUri == desiredUri) return
+
+    val replacingCurrent = currentMediaItem?.mediaId == currentItem.mediaId
+    val positionBeforeReplace = currentPosition.coerceAtLeast(0L)
+    val playWhenReadyBeforeReplace = playWhenReady
+    val wasPlayingBeforeReplace = isPlaying
+
+    replaceMediaItem(index, desiredItem)
+
+    if (replacingCurrent) {
+        // When a remote streamed item becomes a local imported item, only the
+        // URI changes. Media3 may otherwise treat replaceMediaItem on the
+        // current item as a fresh source and restart it from 0.
+        seekTo(index, positionBeforeReplace)
+        playWhenReady = playWhenReadyBeforeReplace || wasPlayingBeforeReplace
+    }
+}
+
+private fun MediaController.indexOfMediaItem(mediaId: String): Int {
         for (index in 0 until mediaItemCount) {
             if (getMediaItemAt(index).mediaId == mediaId) {
                 return index
@@ -651,7 +681,28 @@ class PlaybackController(
         }
     }
 
-    private fun syncCurrentQueueItem(
+    private fun syncCurrentQueueItemAndShuffleUpcoming(
+    queueItemId: String,
+    playbackPositionMs: Long,
+    wasPlaying: Boolean?
+) {
+    scope.launch {
+        queueRepository.markCurrent(
+            queueItemId = queueItemId,
+            playbackPositionMs = playbackPositionMs,
+            wasPlaying = wasPlaying
+        )
+
+        val result = queueRepository.shuffleUpcoming()
+        applyQueueResult(
+            result = result,
+            playWhenReady = wasPlaying == true,
+            forcePositionMs = mediaController?.currentPosition?.coerceAtLeast(0L) ?: playbackPositionMs
+        )
+    }
+}
+
+private fun syncCurrentQueueItem(
         queueItemId: String?,
         playbackPositionMs: Long,
         wasPlaying: Boolean?
