@@ -138,11 +138,7 @@ fun QueueScreen(
     )
 
     val currentVisibleIndex = visibleItems.indexOfFirst { it.queueItemId == liveCurrentQueueItemId }
-
-    fun maxDragUpPx(): Float = -dragStartIndex * rowHeightPx
-    fun maxDragDownPx(): Float = (baseItems.lastIndex - dragStartIndex) * rowHeightPx
-
-    fun updateDragOffset(newOffset: Float) {
+fun updateDragOffset(newOffset: Float) {
         if (draggingQueueItemId == null || dragStartIndex !in baseItems.indices || baseItems.isEmpty()) return
         dragOffsetPx = newOffset.coerceIn(maxDragUpPx(), maxDragDownPx())
         dragTargetIndex = (dragStartIndex + (dragOffsetPx / rowHeightPx).toInt())
@@ -204,12 +200,7 @@ fun QueueScreen(
         dragTargetIndex = index
         dragOffsetPx = 0f
     }
-
-    fun maxDragUpPx(): Float = -dragStartIndex * rowHeightPx
-
-    fun maxDragDownPx(): Float = (baseItems.lastIndex - dragStartIndex) * rowHeightPx
-
-    fun updateDragOffsetSafely(newOffset: Float) {
+fun updateDragOffsetSafely(newOffset: Float) {
         if (draggingQueueItemId == null || dragStartIndex !in baseItems.indices || baseItems.isEmpty()) return
         dragOffsetPx = newOffset.coerceIn(maxDragUpPx(), maxDragDownPx())
         dragTargetIndex = (dragStartIndex + (dragOffsetPx / rowHeightPx).toInt())
