@@ -1,4 +1,101 @@
-package com.fenl.fenlzer.ui.queue
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+
+DRAG_HANDLE_SOURCE = '''package com.fenl.fenlzer.ui.components
+
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.DragHandle
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
+import kotlin.math.abs
+
+/**
+ * Deezer-like reorder handle used by queue and playlist rows.
+ *
+ * This is intentionally handle-only: there are no up/down buttons. The user holds
+ * the grip and drags vertically. The implementation translates the vertical drag
+ * into repeated one-step moves so it stays dependency-free and works for both
+ * QueueScreen and PlaylistsScreen.
+ */
+@Composable
+fun DragStepHandle(
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    canMoveUp: Boolean = enabled,
+    canMoveDown: Boolean = enabled,
+    contentDescription: String = "Reorder",
+    testTag: String = "dragStepHandle"
+) {
+    var accumulatedDrag by remember { mutableFloatStateOf(0f) }
+    val stepThresholdPx = 28f
+    val effectiveCanMoveUp = enabled && canMoveUp
+    val effectiveCanMoveDown = enabled && canMoveDown
+    val effectiveEnabled = effectiveCanMoveUp || effectiveCanMoveDown
+
+    Box(
+        modifier = modifier
+            .size(48.dp)
+            .testTag(testTag)
+            .pointerInput(effectiveEnabled, effectiveCanMoveUp, effectiveCanMoveDown) {
+                if (!effectiveEnabled) return@pointerInput
+                detectDragGestures(
+                    onDragStart = { accumulatedDrag = 0f },
+                    onDragEnd = { accumulatedDrag = 0f },
+                    onDragCancel = { accumulatedDrag = 0f }
+                ) { change, dragAmount ->
+                    change.consume()
+                    accumulatedDrag += dragAmount.y
+                    while (abs(accumulatedDrag) >= stepThresholdPx) {
+                        if (accumulatedDrag < 0f) {
+                            if (effectiveCanMoveUp) {
+                                onMoveUp()
+                            }
+                            accumulatedDrag += stepThresholdPx
+                        } else {
+                            if (effectiveCanMoveDown) {
+                                onMoveDown()
+                            }
+                            accumulatedDrag -= stepThresholdPx
+                        }
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.DragHandle,
+            contentDescription = contentDescription,
+            tint = if (effectiveEnabled) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+            }
+        )
+    }
+}
+'''
+
+QUEUE_SCREEN_SOURCE = '''package com.fenl.fenlzer.ui.queue
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -487,3 +584,93 @@ private fun String?.queueLabel(): String = when (this) {
         .replace('_', ' ')
         .replaceFirstChar { it.titlecase(Locale.US) }
 }
+'''
+
+
+def patch_fenlzer_app(text: str) -> tuple[str, bool]:
+    original = text
+    replacements = [
+        (
+            "currentRoute != FenlzerRoute.Diagnostics",
+            "currentRoute !in setOf(FenlzerRoute.Diagnostics, FenlzerRoute.Queue)",
+        ),
+        (
+            "currentRoute !in setOf(FenlzerRoute.Diagnostics)",
+            "currentRoute !in setOf(FenlzerRoute.Diagnostics, FenlzerRoute.Queue)",
+        ),
+        (
+            "currentRoute !in listOf(FenlzerRoute.Diagnostics)",
+            "currentRoute !in listOf(FenlzerRoute.Diagnostics, FenlzerRoute.Queue)",
+        ),
+        (
+            "currentRoute !in setOf(FenlzerRoute.Player, FenlzerRoute.Diagnostics)",
+            "currentRoute !in setOf(FenlzerRoute.Player, FenlzerRoute.Diagnostics, FenlzerRoute.Queue)",
+        ),
+        (
+            "currentRoute !in listOf(FenlzerRoute.Player, FenlzerRoute.Diagnostics)",
+            "currentRoute !in listOf(FenlzerRoute.Player, FenlzerRoute.Diagnostics, FenlzerRoute.Queue)",
+        ),
+    ]
+    for old, new in replacements:
+        text = text.replace(old, new)
+
+    text = re.sub(
+        r"val\\s+(\\w*(?:TopBar|OuterTopBar|AppBar)\\w*)\\s*=\\s*currentRoute\\s*!in\\s*setOf\\(FenlzerRoute\\.Diagnostics\\)",
+        r"val \\1 = currentRoute !in setOf(FenlzerRoute.Diagnostics, FenlzerRoute.Queue)",
+        text,
+    )
+
+    text = re.sub(
+        r"val\\s+(\\w*(?:MiniPlayer|BottomNav|BottomNavigation|NavigationBar)\\w*)\\s*=\\s*currentRoute\\s*!in\\s*setOf\\(([^)]*FenlzerRoute\\.Diagnostics[^)]*)\\)",
+        lambda m: (
+            f"val {m.group(1)} = currentRoute !in setOf("
+            f"{m.group(2) if 'FenlzerRoute.Queue' in m.group(2) else m.group(2) + ', FenlzerRoute.Queue'}"
+            f")"
+        ),
+        text,
+    )
+
+    return text, text != original
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print("Usage: python3 fenlzer_fix_phase16_queue_playlist_deezer_style.py /path/to/Fenlzer")
+        return 2
+
+    root = Path(sys.argv[1]).resolve()
+    drag_handle = root / "app/src/main/java/com/fenl/fenlzer/ui/components/DragStepHandle.kt"
+    queue_screen = root / "app/src/main/java/com/fenl/fenlzer/ui/queue/QueueScreen.kt"
+    fenlzer_app = root / "app/src/main/java/com/fenl/fenlzer/ui/FenlzerApp.kt"
+
+    missing = [p for p in [drag_handle, queue_screen, fenlzer_app] if not p.exists()]
+    if missing:
+        print("ERROR: Missing expected files:")
+        for p in missing:
+            print(f"  - {p}")
+        return 1
+
+    drag_handle.write_text(DRAG_HANDLE_SOURCE)
+    queue_screen.write_text(QUEUE_SCREEN_SOURCE)
+
+    app_text = fenlzer_app.read_text()
+    app_text, changed = patch_fenlzer_app(app_text)
+    fenlzer_app.write_text(app_text)
+
+    print("Updated DragStepHandle.kt to be handle-only with vertical drag reorder.")
+    print("Rewrote QueueScreen.kt with:")
+    print("  - live current-item highlighting based on playbackState.currentItem")
+    print("  - auto-scroll to current item when opened")
+    print("  - shorter dismissible snackbar")
+    print("  - reduced header padding and no nested Scaffold")
+    print("  - highlighted current item using primaryContainer")
+    if changed:
+        print("Adjusted FenlzerApp.kt chrome conditions to hide outer top bar/navigation on Queue.")
+    else:
+        print("WARNING: FenlzerApp.kt chrome conditions were not matched. If the outer Queue back arrow remains, share/push the current FenlzerApp.kt.")
+    print("Next: ./gradlew assembleDebug")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
