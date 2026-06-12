@@ -105,6 +105,18 @@ import java.util.Locale
 import com.fenl.fenlzer.ui.components.DragStepHandle
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.zIndex
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 @Composable
 fun PlaylistsScreen(
@@ -1153,7 +1165,306 @@ private fun PlaylistTrackList(
     sourceTracks: List<PlaylistTrackItem>,
     selectedTrackIds: Set<String> = emptySet(),
     selectionMode: Boolean = false,
-    onToggleSelection: (String) -> Unit = {},
+    onToggleSelection: (String) -> Unit = {}
+
+
+private val PlaylistTrackRowHeight = 72.dp
+
+private fun visualPlaylistRowOffsetPx(
+    index: Int,
+    isDragging: Boolean,
+    dragOffsetPx: Float,
+    dragStartIndex: Int,
+    dragTargetIndex: Int,
+    rowHeightPx: Float
+): Float {
+    if (dragStartIndex < 0 || dragTargetIndex < 0) return 0f
+    if (isDragging) return dragOffsetPx
+    return when {
+        dragTargetIndex > dragStartIndex && index in (dragStartIndex + 1)..dragTargetIndex -> -rowHeightPx
+        dragTargetIndex < dragStartIndex && index in dragTargetIndex until dragStartIndex -> rowHeightPx
+        else -> 0f
+    }
+}
+
+private fun movePlaylistTrackId(
+    ids: List<String>,
+    fromIndex: Int,
+    toIndex: Int
+): List<String> {
+    if (fromIndex !in ids.indices || toIndex !in ids.indices || fromIndex == toIndex) return ids
+    return ids.toMutableList().apply {
+        val moved = removeAt(fromIndex)
+        add(toIndex, moved)
+    }
+}
+
+private fun autoScrollPlaylistIfNeeded(
+    scope: CoroutineScope,
+    listState: LazyListState,
+    dragTargetIndex: Int,
+    deltaY: Float,
+    canScrollUp: Boolean,
+    canScrollDown: Boolean,
+    onScrolled: (Float) -> Unit
+) {
+    val layoutInfo = listState.layoutInfo
+    val visibleInfo = layoutInfo.visibleItemsInfo
+    if (visibleInfo.isEmpty()) return
+
+    val draggedInfo = visibleInfo.firstOrNull { it.index == dragTargetIndex }
+    val firstVisible = visibleInfo.first()
+    val lastVisible = visibleInfo.last()
+    val thresholdPx = (draggedInfo?.size ?: firstVisible.size) * 3.25f
+    val draggedTop = draggedInfo?.offset ?: if (deltaY < 0f) firstVisible.offset else lastVisible.offset
+    val draggedBottom = draggedTop + (draggedInfo?.size ?: firstVisible.size)
+
+    val distanceToTop = draggedTop - layoutInfo.viewportStartOffset
+    val distanceToBottom = layoutInfo.viewportEndOffset - draggedBottom
+
+    val direction = when {
+        canScrollUp &&
+            deltaY < 0f &&
+            dragTargetIndex > 0 &&
+            (distanceToTop < thresholdPx || dragTargetIndex <= firstVisible.index + 1) -> -1f
+
+        canScrollDown &&
+            deltaY > 0f &&
+            dragTargetIndex < lastVisible.index &&
+            (distanceToBottom < thresholdPx || dragTargetIndex >= lastVisible.index - 1) -> 1f
+
+        else -> 0f
+    }
+
+    if (direction != 0f) {
+        val scrollAmount = direction * (kotlin.math.abs(deltaY) * 4.6f).coerceIn(44f, 190f)
+        scope.launch {
+            val consumed = listState.scrollBy(scrollAmount)
+            onScrolled(consumed)
+        }
+    }
+}
+,
+    onEnterSelection: (String) -> Unit = {},
+    showRemove: Boolean,
+    onTrackClick: (PlaylistTrackItem) -> Unit,
+    onMove: (String, Int) -> Unit,
+    onRemove: (String) -> Unit,
+    onPlayNext: (String) -> Unit,
+    onAddToQueue: (String) -> Unit,
+    onToggleFavourite: (String, Boolean) -> Unit,
+    onAddToPlaylist: (String, String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (tracks.isEmpty()) {
+        EmptyListMessage(text = emptyText, modifier = modifier)
+        return
+    }
+
+    val reorderEnabled = canReorder && !selectionMode
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val rowHeightPx = with(LocalDensity.current) { PlaylistTrackRowHeight.toPx() }
+
+    val trackIds = tracks.map { it.trackId }
+    val trackIdSet = trackIds.toSet()
+    var pendingOrderIds by remember { mutableStateOf<List<String>?>(null) }
+    var draggingTrackId by remember { mutableStateOf<String?>(null) }
+    var dragStartIndex by remember { mutableIntStateOf(-1) }
+    var dragTargetIndex by remember { mutableIntStateOf(-1) }
+    var dragOffsetPx by remember { mutableFloatStateOf(0f) }
+
+    LaunchedEffect(trackIds.joinToString("|")) {
+        val pending = pendingOrderIds
+        if (pending != null) {
+            when {
+                pending == trackIds -> pendingOrderIds = null
+                pending.toSet() != trackIdSet -> pendingOrderIds = null
+            }
+        }
+    }
+
+    val visibleTracks = remember(tracks, pendingOrderIds) {
+        val pending = pendingOrderIds
+        if (pending != null && pending.toSet() == trackIdSet) {
+            val byId = tracks.associateBy { it.trackId }
+            pending.mapNotNull(byId::get)
+        } else {
+            tracks
+        }
+    }
+
+    fun minDragOffsetPx(): Float =
+        if (dragStartIndex >= 0) -dragStartIndex * rowHeightPx else 0f
+
+    fun maxDragOffsetPx(): Float =
+        if (dragStartIndex >= 0) (visibleTracks.lastIndex - dragStartIndex) * rowHeightPx else 0f
+
+    fun updateDragOffsetSafely(newOffset: Float) {
+        if (draggingTrackId == null || dragStartIndex !in visibleTracks.indices || visibleTracks.isEmpty()) return
+        dragOffsetPx = newOffset.coerceIn(minDragOffsetPx(), maxDragOffsetPx())
+        dragTargetIndex = (dragStartIndex + (dragOffsetPx / rowHeightPx).toInt())
+            .coerceIn(0, visibleTracks.lastIndex)
+    }
+
+    fun startDrag(track: PlaylistTrackItem) {
+        if (!reorderEnabled) return
+        val index = visibleTracks.indexOfFirst { it.trackId == track.trackId }
+        if (index < 0) return
+        draggingTrackId = track.trackId
+        dragStartIndex = index
+        dragTargetIndex = index
+        dragOffsetPx = 0f
+    }
+
+    fun dragBy(deltaY: Float) {
+        if (draggingTrackId == null || dragStartIndex !in visibleTracks.indices || visibleTracks.isEmpty()) return
+
+        val canMoveUp = dragOffsetPx > minDragOffsetPx()
+        val canMoveDown = dragOffsetPx < maxDragOffsetPx()
+        if ((deltaY < 0f && !canMoveUp) || (deltaY > 0f && !canMoveDown)) {
+            updateDragOffsetSafely(dragOffsetPx)
+            return
+        }
+
+        updateDragOffsetSafely(dragOffsetPx + deltaY)
+
+        autoScrollPlaylistIfNeeded(
+            scope = scope,
+            listState = listState,
+            dragTargetIndex = dragTargetIndex,
+            deltaY = deltaY,
+            canScrollUp = dragTargetIndex > 0 || dragOffsetPx > minDragOffsetPx(),
+            canScrollDown = dragTargetIndex < visibleTracks.lastIndex || dragOffsetPx < maxDragOffsetPx(),
+            onScrolled = { consumedScrollPx ->
+                updateDragOffsetSafely(dragOffsetPx + consumedScrollPx)
+            }
+        )
+    }
+
+    fun clearDrag(commit: Boolean) {
+        val itemId = draggingTrackId
+        val delta = dragTargetIndex - dragStartIndex
+        if (commit && itemId != null && delta != 0 && dragStartIndex in visibleTracks.indices && dragTargetIndex in visibleTracks.indices) {
+            pendingOrderIds = movePlaylistTrackId(
+                ids = visibleTracks.map { it.trackId },
+                fromIndex = dragStartIndex,
+                toIndex = dragTargetIndex
+            )
+
+            if (delta > 0) {
+                repeat(delta) { onMove(itemId, 1) }
+            } else {
+                repeat(-delta) { onMove(itemId, -1) }
+            }
+        }
+
+        draggingTrackId = null
+        dragStartIndex = -1
+        dragTargetIndex = -1
+        dragOffsetPx = 0f
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        userScrollEnabled = draggingTrackId == null
+    ) {
+        itemsIndexed(
+            items = visibleTracks,
+            key = { _, track -> track.trackId }
+        ) { index, track ->
+            val isSelected = track.trackId in selectedTrackIds
+            val isDragging = track.trackId == draggingTrackId
+            val rowCanMoveUp = reorderEnabled && if (isDragging) dragTargetIndex > 0 else index > 0
+            val rowCanMoveDown = reorderEnabled && if (isDragging) dragTargetIndex < visibleTracks.lastIndex else index < visibleTracks.lastIndex
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .graphicsLayer {
+                        translationY = visualPlaylistRowOffsetPx(
+                            index = index,
+                            isDragging = isDragging,
+                            dragOffsetPx = dragOffsetPx,
+                            dragStartIndex = dragStartIndex,
+                            dragTargetIndex = dragTargetIndex,
+                            rowHeightPx = rowHeightPx
+                        )
+                        shadowElevation = if (isDragging) 16f else 0f
+                        scaleX = if (isDragging) 1.015f else 1f
+                        scaleY = if (isDragging) 1.015f else 1f
+                    }
+                    .zIndex(if (isDragging) 2f else 0f),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = PlaylistTrackRowHeight)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            if (isSelected) {
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.70f)
+                            } else {
+                                MaterialTheme.colorScheme.surface
+                            }
+                        )
+                        .combinedClickable(
+                            onClick = {
+                                if (selectionMode) {
+                                    onToggleSelection(track.trackId)
+                                } else {
+                                    onTrackClick(track)
+                                }
+                            },
+                            onLongClick = { onEnterSelection(track.trackId) }
+                        )
+                ) {
+                    PlaylistTrackRow(
+                        track = track,
+                        showRemove = showRemove,
+                        canReorder = false,
+                        canMoveUp = false,
+                        canMoveDown = false,
+                        onMoveUp = {},
+                        onMoveDown = {},
+                        onClick = {
+                            if (selectionMode) {
+                                onToggleSelection(track.trackId)
+                            } else {
+                                onTrackClick(track)
+                            }
+                        },
+                        onRemove = { onRemove(track.trackId) },
+                        onPlayNext = { onPlayNext(track.trackId) },
+                        onAddToQueue = { onAddToQueue(track.trackId) },
+                        onToggleFavourite = { onToggleFavourite(track.trackId, !track.isFavourite) },
+                        onAddToPlaylist = { onAddToPlaylist(track.trackId, "") }
+                    )
+                }
+
+                if (reorderEnabled) {
+                    DragStepHandle(
+                        onMoveUp = { onMove(track.trackId, -1) },
+                        onMoveDown = { onMove(track.trackId, 1) },
+                        canMoveUp = rowCanMoveUp,
+                        canMoveDown = rowCanMoveDown,
+                        enabled = true,
+                        contentDescription = "Reorder playlist item",
+                        modifier = Modifier.padding(end = 8.dp),
+                        onDragStart = { startDrag(track) },
+                        onDragDelta = ::dragBy,
+                        onDragEnd = { clearDrag(commit = true) }
+                    )
+                }
+            }
+        }
+    }
+}
+,
     onEnterSelection: (String) -> Unit = {},
     showRemove: Boolean,
     onTrackClick: (PlaylistTrackItem) -> Unit,

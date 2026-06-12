@@ -220,15 +220,11 @@ fun HomeScreen(
                         .forEach(onPlayNext)
                     selectedTrackIds = emptySet()
                 },
-                onAddToQueue = {
-            val selectedTracksSnapshot = visibleTracks.filter { track ->
-                track.trackId in selectedTrackIds
-            }
-            selectedTracksSnapshot.forEach { track ->
-                onAddToQueue(track)
-            }
+        onAddToQueue = {
+            val selectedTracks = visibleTracks.filter { track -> track.trackId in selectedTrackIds }
+            selectedTracks.forEach { track -> onAddToQueue(track) }
             selectedTrackIds = emptySet()
-        },
+        }
                 onDelete = {
                     val selected = tracks.filter { it.trackId in selectedTrackIds }
                     onDeleteTracks(selected)
@@ -1148,8 +1144,7 @@ private fun TrackRow(
         },
         leadingContent = {
             TrackArtwork(track = track)
-        },
-        
+        }
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))

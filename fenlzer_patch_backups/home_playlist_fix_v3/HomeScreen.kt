@@ -221,14 +221,11 @@ fun HomeScreen(
                     selectedTrackIds = emptySet()
                 },
                 onAddToQueue = {
-            val selectedTracksSnapshot = visibleTracks.filter { track ->
-                track.trackId in selectedTrackIds
-            }
-            selectedTracksSnapshot.forEach { track ->
-                onAddToQueue(track)
-            }
-            selectedTrackIds = emptySet()
-        },
+                    visibleTracks
+                        .filter { it.trackId in selectedTrackIds }
+                        .forEach(onAddToQueue)
+                    selectedTrackIds = emptySet()
+                },
                 onDelete = {
                     val selected = tracks.filter { it.trackId in selectedTrackIds }
                     onDeleteTracks(selected)
@@ -1149,7 +1146,102 @@ private fun TrackRow(
         leadingContent = {
             TrackArtwork(track = track)
         },
-        
+        trailingContent = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = track.durationMs.formatDuration(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(imageVector = Icons.Rounded.MoreVert, contentDescription = "Song actions")
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(text = "Play Next") },
+                        onClick = {
+                            menuExpanded = false
+                            onPlayNext()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(text = "Add to Queue") },
+                        onClick = {
+                            menuExpanded = false
+                            onAddToQueue()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(text = "Add to Playlist") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                                contentDescription = null
+                            )
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onAddToPlaylist()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(text = "Song Details") },
+                        leadingIcon = {
+                            Icon(imageVector = Icons.Rounded.Info, contentDescription = null)
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onOpenSongDetails()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(text = "Edit Tags") },
+                        leadingIcon = {
+                            Icon(imageVector = Icons.Rounded.Edit, contentDescription = null)
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onEditMetadata()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(text = if (track.isFavourite) "Remove Favourite" else "Favourite")
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = if (track.isFavourite) {
+                                    Icons.Rounded.Favorite
+                                } else {
+                                    Icons.Rounded.FavoriteBorder
+                                },
+                                contentDescription = null
+                            )
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onToggleFavourite()
+                        }
+                    )
+                    if (showDeleteAction) {
+                        DropdownMenuItem(
+                            text = { Text(text = "Delete from Fenlzer") },
+                            leadingIcon = {
+                                Icon(imageVector = Icons.Rounded.Delete, contentDescription = null)
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onDelete()
+                            }
+                        )
+                    }
+                }
+            }
+        },
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
