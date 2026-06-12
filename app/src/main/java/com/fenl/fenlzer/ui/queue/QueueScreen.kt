@@ -2,6 +2,7 @@ package com.fenl.fenlzer.ui.queue
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +15,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.LazyListItemInfo
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -32,6 +35,7 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -45,17 +49,22 @@ import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import coil3.compose.AsyncImage
 import com.fenl.fenlzer.data.repository.QueueTrackItem
 import com.fenl.fenlzer.playback.PlaybackUiState
@@ -81,19 +90,39 @@ fun QueueScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
+    val density = LocalDensity.current
 
     var pendingHiddenIds by remember { mutableStateOf(emptySet<String>()) }
     var saveDialogOpen by remember { mutableStateOf(false) }
     var savePlaylistName by remember { mutableStateOf("Saved queue") }
 
+    var initialCurrentScrollDone by remember { mutableStateOf(false) }
+    var draggingQueueItemId by remember { mutableStateOf<String?>(null) }
+    var draggedIndex by remember { mutableIntStateOf(-1) }
+    var dragOffsetPx by remember { mutableFloatStateOf(0f) }
+
     val liveCurrentQueueItemId = playbackState.currentItem?.queueItemId
+    val sourceIds = playbackState.queueItems.map { it.queueItemId }.toSet()
+
+    LaunchedEffect(sourceIds.joinToString("|")) {
+        pendingHiddenIds = pendingHiddenIds.intersect(sourceIds)
+    }
+
     val visibleItems = playbackState.queueItems.filterNot { it.queueItemId in pendingHiddenIds }
     val currentVisibleIndex = visibleItems.indexOfFirst { it.queueItemId == liveCurrentQueueItemId }
+    val rowHeightPx = with(density) { 72.dp.toPx() }
 
-    LaunchedEffect(liveCurrentQueueItemId, visibleItems.size) {
-        if (currentVisibleIndex >= 0) {
+    LaunchedEffect(visibleItems.size, liveCurrentQueueItemId) {
+        if (!initialCurrentScrollDone && currentVisibleIndex >= 0) {
             listState.scrollToItem(currentVisibleIndex)
+            initialCurrentScrollDone = true
         }
+    }
+
+    fun resetDrag() {
+        draggingQueueItemId = null
+        draggedIndex = -1
+        dragOffsetPx = 0f
     }
 
     fun requestUndoableRemoval(item: QueueTrackItem) {
@@ -110,8 +139,34 @@ fun QueueScreen(
                 pendingHiddenIds = pendingHiddenIds - item.queueItemId
             } else {
                 onRemoveItem(item.queueItemId)
-                pendingHiddenIds = pendingHiddenIds - item.queueItemId
             }
+        }
+    }
+
+    fun handleDragStart(item: QueueTrackItem, index: Int) {
+        if (item.queueItemId == liveCurrentQueueItemId) return
+        draggingQueueItemId = item.queueItemId
+        draggedIndex = index
+        dragOffsetPx = 0f
+    }
+
+    fun handleDragDelta(item: QueueTrackItem, index: Int, deltaY: Float) {
+        if (draggingQueueItemId != item.queueItemId || item.queueItemId == liveCurrentQueueItemId) return
+
+        dragOffsetPx += deltaY
+        maybeAutoScrollQueue(
+            scope = scope,
+            listState = listState,
+            draggedIndex = index,
+            deltaY = deltaY
+        )
+
+        if (dragOffsetPx >= rowHeightPx && index < visibleItems.lastIndex) {
+            onMoveItem(item.queueItemId, 1)
+            dragOffsetPx -= rowHeightPx
+        } else if (dragOffsetPx <= -rowHeightPx && index > 0) {
+            onMoveItem(item.queueItemId, -1)
+            dragOffsetPx += rowHeightPx
         }
     }
 
@@ -182,29 +237,78 @@ fun QueueScreen(
                             key = { _, item -> item.queueItemId }
                         ) { index, item ->
                             val isCurrent = item.queueItemId == liveCurrentQueueItemId
+                            val isDragging = item.queueItemId == draggingQueueItemId
                             QueueRow(
                                 item = item,
                                 isCurrent = isCurrent,
+                                isDragging = isDragging,
+                                dragOffsetPx = if (isDragging) dragOffsetPx else 0f,
                                 canMoveUp = !isCurrent && index > 0,
                                 canMoveDown = !isCurrent && index < visibleItems.lastIndex,
                                 onRemoveItem = onRemoveItem,
                                 onRequestUndoableRemoval = ::requestUndoableRemoval,
                                 onJumpToItem = onJumpToItem,
                                 onMoveUp = { onMoveItem(item.queueItemId, -1) },
-                                onMoveDown = { onMoveItem(item.queueItemId, 1) }
+                                onMoveDown = { onMoveItem(item.queueItemId, 1) },
+                                onDragStart = { handleDragStart(item, index) },
+                                onDragDelta = { deltaY -> handleDragDelta(item, index, deltaY) },
+                                onDragEnd = ::resetDrag
                             )
                         }
                     }
                 }
             }
 
-            SnackbarHost(
-                hostState = snackbarHostState,
+            DismissibleQueueSnackbarHost(
+                snackbarHostState = snackbarHostState,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(16.dp)
             )
         }
+    }
+}
+
+private fun maybeAutoScrollQueue(
+    scope: kotlinx.coroutines.CoroutineScope,
+    listState: LazyListState,
+    draggedIndex: Int,
+    deltaY: Float
+) {
+    val visibleInfo = listState.layoutInfo.visibleItemsInfo
+    val firstVisible = visibleInfo.firstOrNull()?.index ?: return
+    val lastVisible = visibleInfo.lastOrNull()?.index ?: return
+    val shouldScrollUp = deltaY < 0f && draggedIndex <= firstVisible + 1
+    val shouldScrollDown = deltaY > 0f && draggedIndex >= lastVisible - 1
+    if (shouldScrollUp || shouldScrollDown) {
+        scope.launch {
+            listState.scrollBy(deltaY * 1.65f)
+        }
+    }
+}
+
+@Composable
+private fun DismissibleQueueSnackbarHost(
+    snackbarHostState: SnackbarHostState,
+    modifier: Modifier = Modifier
+) {
+    SnackbarHost(
+        hostState = snackbarHostState,
+        modifier = modifier
+    ) { snackbarData ->
+        val dismissState = rememberSwipeToDismissBoxState(
+            confirmValueChange = {
+                snackbarData.dismiss()
+                true
+            }
+        )
+        SwipeToDismissBox(
+            state = dismissState,
+            enableDismissFromStartToEnd = true,
+            enableDismissFromEndToStart = true,
+            backgroundContent = {},
+            content = { Snackbar(snackbarData = snackbarData) }
+        )
     }
 }
 
@@ -315,13 +419,18 @@ private fun EmptyQueueState(modifier: Modifier = Modifier) {
 private fun QueueRow(
     item: QueueTrackItem,
     isCurrent: Boolean,
+    isDragging: Boolean,
+    dragOffsetPx: Float,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
     onRemoveItem: (String) -> Unit,
     onRequestUndoableRemoval: (QueueTrackItem) -> Unit,
     onJumpToItem: (String) -> Unit,
     onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit
+    onMoveDown: () -> Unit,
+    onDragStart: () -> Unit,
+    onDragDelta: (Float) -> Unit,
+    onDragEnd: () -> Unit
 ) {
     var confirmCurrentRemoval by remember { mutableStateOf(false) }
 
@@ -453,16 +562,27 @@ private fun QueueRow(
             },
             trailingContent = {
                 DragStepHandle(
-                    onMoveUp = onMoveUp,
-                    onMoveDown = onMoveDown,
                     canMoveUp = canMoveUp,
                     canMoveDown = canMoveDown,
+                    onMoveUp = onMoveUp,
+                    onMoveDown = onMoveDown,
                     enabled = !isCurrent,
-                    contentDescription = if (isCurrent) "Current song stays fixed" else "Reorder queue item"
+                    contentDescription = if (isCurrent) "Current song stays fixed" else "Reorder queue item",
+                    onDragStart = onDragStart,
+                    onDragDelta = onDragDelta,
+                    onDragEnd = onDragEnd
                 )
             },
             colors = ListItemDefaults.colors(containerColor = containerColor),
-            modifier = Modifier.clickable { onJumpToItem(item.queueItemId) }
+            modifier = Modifier
+                .graphicsLayer {
+                    translationY = dragOffsetPx
+                    shadowElevation = if (isDragging) 12f else 0f
+                    scaleX = if (isDragging) 1.015f else 1f
+                    scaleY = if (isDragging) 1.015f else 1f
+                }
+                .zIndex(if (isDragging) 1f else 0f)
+                .clickable { onJumpToItem(item.queueItemId) }
         )
     }
 }

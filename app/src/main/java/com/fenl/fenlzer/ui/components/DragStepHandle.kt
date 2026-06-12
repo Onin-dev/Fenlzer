@@ -20,26 +20,29 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 
 /**
- * Deezer-like reorder handle used by queue and playlist rows.
+ * Handle-only reorder affordance.
  *
- * This is intentionally handle-only: there are no up/down buttons. The user holds
- * the grip and drags vertically. The implementation translates the vertical drag
- * into repeated one-step moves so it stays dependency-free and works for both
- * QueueScreen and PlaylistsScreen.
+ * Queue rows use [onDragDelta] for live Deezer-style dragging: the dragged row
+ * stays under the finger and only commits a move after it crosses a row boundary.
+ * Existing playlist rows can keep using [onMoveUp]/[onMoveDown]; in that fallback
+ * mode this component still exposes only the drag handle, not arrow buttons.
  */
 @Composable
 fun DragStepHandle(
+    canMoveUp: Boolean = true,
+    canMoveDown: Boolean = true,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-    canMoveUp: Boolean = enabled,
-    canMoveDown: Boolean = enabled,
+    enabled: Boolean = canMoveUp || canMoveDown,
     contentDescription: String = "Reorder",
-    testTag: String = "dragStepHandle"
+    testTag: String = "dragStepHandle",
+    onDragStart: (() -> Unit)? = null,
+    onDragDelta: ((Float) -> Unit)? = null,
+    onDragEnd: (() -> Unit)? = null
 ) {
     var accumulatedDrag by remember { mutableFloatStateOf(0f) }
-    val stepThresholdPx = 28f
+    val stepThresholdPx = 42f
     val effectiveCanMoveUp = enabled && canMoveUp
     val effectiveCanMoveDown = enabled && canMoveDown
     val effectiveEnabled = effectiveCanMoveUp || effectiveCanMoveDown
@@ -48,26 +51,35 @@ fun DragStepHandle(
         modifier = modifier
             .size(48.dp)
             .testTag(testTag)
-            .pointerInput(effectiveEnabled, effectiveCanMoveUp, effectiveCanMoveDown) {
+            .pointerInput(effectiveEnabled, effectiveCanMoveUp, effectiveCanMoveDown, onDragDelta) {
                 if (!effectiveEnabled) return@pointerInput
                 detectDragGestures(
-                    onDragStart = { accumulatedDrag = 0f },
-                    onDragEnd = { accumulatedDrag = 0f },
-                    onDragCancel = { accumulatedDrag = 0f }
+                    onDragStart = {
+                        accumulatedDrag = 0f
+                        onDragStart?.invoke()
+                    },
+                    onDragCancel = {
+                        accumulatedDrag = 0f
+                        onDragEnd?.invoke()
+                    },
+                    onDragEnd = {
+                        accumulatedDrag = 0f
+                        onDragEnd?.invoke()
+                    }
                 ) { change, dragAmount ->
                     change.consume()
-                    accumulatedDrag += dragAmount.y
-                    while (abs(accumulatedDrag) >= stepThresholdPx) {
-                        if (accumulatedDrag < 0f) {
-                            if (effectiveCanMoveUp) {
+                    val customDrag = onDragDelta
+                    if (customDrag != null) {
+                        customDrag(dragAmount.y)
+                    } else {
+                        accumulatedDrag += dragAmount.y
+                        if (abs(accumulatedDrag) >= stepThresholdPx) {
+                            if (accumulatedDrag < 0f && effectiveCanMoveUp) {
                                 onMoveUp()
-                            }
-                            accumulatedDrag += stepThresholdPx
-                        } else {
-                            if (effectiveCanMoveDown) {
+                            } else if (accumulatedDrag > 0f && effectiveCanMoveDown) {
                                 onMoveDown()
                             }
-                            accumulatedDrag -= stepThresholdPx
+                            accumulatedDrag = 0f
                         }
                     }
                 }
