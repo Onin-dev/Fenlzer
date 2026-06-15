@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import androidx.room.ColumnInfo
 
 @Entity(
     tableName = "import_jobs",
@@ -33,6 +34,10 @@ data class ImportJobEntity(
     @PrimaryKey val importJobId: String,
     val apiJobId: String? = null,
     val jobType: String,
+    val sourceType: String? = null,
+    val reason: String? = null,
+    val priorityClass: String? = null,
+    val pendingActionType: String? = null,
     val priority: Int,
     val status: String,
     val sourceUrl: String? = null,
@@ -46,6 +51,9 @@ data class ImportJobEntity(
     val errorCode: String? = null,
     val errorMessage: String? = null,
     val technicalDetailsJson: String? = null,
+    @ColumnInfo(defaultValue = "0") val attemptCount: Int = 0,
+    @ColumnInfo(defaultValue = "3") val maxAttempts: Int = 3,
+    @ColumnInfo(defaultValue = "0") val isVisibleInActiveImports: Boolean = true,
     val createdAt: Long,
     val updatedAt: Long,
     val completedAt: Long? = null
@@ -79,6 +87,11 @@ data class ImportHistoryEntryEntity(
     val importJobId: String? = null,
     val result: String,
     val reason: String,
+    val sourceType: String? = null,
+    val jobType: String? = null,
+    val requestedFormat: String? = null,
+    val finalFormat: String? = null,
+    val pendingActionType: String? = null,
     val trackId: String? = null,
     val sourceUrl: String? = null,
     val youtubeVideoId: String? = null,

@@ -29,6 +29,7 @@ class YoutubeImportViewModel(
     private var searchJob: Job? = null
     private var importJob: Job? = null
     private var playlistPreviewJob: Job? = null
+    private var activeImportsLeaveJob: Job? = null
     private var fullHistory: List<ImportHistoryUiItem> = emptyList()
 
     init {
@@ -284,6 +285,26 @@ class YoutubeImportViewModel(
         }
     }
 
+    fun dismissFailedImport(importJobId: String) {
+        val coordinator = coordinator ?: return
+        viewModelScope.launch {
+            coordinator.dismissFailedJob(importJobId).await()
+        }
+    }
+
+    fun enterActiveImports() {
+        activeImportsLeaveJob?.cancel()
+    }
+
+    fun leaveActiveImports() {
+        val coordinator = coordinator ?: return
+        activeImportsLeaveJob?.cancel()
+        activeImportsLeaveJob = viewModelScope.launch {
+            delay(ACTIVE_IMPORTS_LEAVE_GRACE_MS)
+            coordinator.acknowledgeFinishedJobs().await()
+        }
+    }
+
     fun setHistoryFilter(filter: ImportHistoryFilter) {
         mutableUiState.update { current ->
             current.copy(
@@ -390,6 +411,7 @@ class YoutubeImportViewModel(
         searchJob?.cancel()
         importJob?.cancel()
         playlistPreviewJob?.cancel()
+        activeImportsLeaveJob?.cancel()
         super.onCleared()
     }
 
@@ -460,3 +482,4 @@ private fun com.fenl.fenlzer.importing.youtube.YoutubePlaylistPreviewItem.isSele
 private val unavailablePlaylistStates = setOf("PRIVATE", "DELETED", "UNAVAILABLE")
 private const val PLAYLIST_PREVIEW_POLL_DELAY_MS = 1_000L
 private const val PLAYLIST_PREVIEW_POLL_LIMIT = 30
+private const val ACTIVE_IMPORTS_LEAVE_GRACE_MS = 400L

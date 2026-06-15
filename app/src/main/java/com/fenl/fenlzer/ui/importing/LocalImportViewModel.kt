@@ -6,7 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.fenl.fenlzer.importing.local.LocalImportBatchResult
 import com.fenl.fenlzer.importing.local.LocalImportProgress
-import com.fenl.fenlzer.importing.local.LocalImportRepository
+import com.fenl.fenlzer.importing.ImportQueueCoordinator
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,7 +15,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 class LocalImportViewModel(
-    private val repository: LocalImportRepository?
+    private val importQueueCoordinator: ImportQueueCoordinator?
 ) : ViewModel() {
     private val mutableUiState = MutableStateFlow(LocalImportUiState())
     val uiState: StateFlow<LocalImportUiState> = mutableUiState.asStateFlow()
@@ -24,7 +24,7 @@ class LocalImportViewModel(
 
     fun importUris(uris: List<Uri>) {
         if (uris.isEmpty() || mutableUiState.value.isRunning) return
-        val repository = repository ?: return
+        val coordinator = importQueueCoordinator ?: return
 
         importJob = viewModelScope.launch {
             mutableUiState.value = LocalImportUiState(
@@ -32,27 +32,31 @@ class LocalImportViewModel(
                 total = uris.size
             )
 
-            val result = repository.importUris(uris) { progress ->
-                mutableUiState.update { current ->
-                    current.copy(
-                        isRunning = true,
-                        progress = progress,
-                        currentIndex = progress.currentIndex,
-                        total = progress.total,
-                        currentFilename = progress.filename,
-                        currentPercent = progress.percent
-                    )
+            runCatching { coordinator.enqueueLocalImports(uris) }
+                .onSuccess { jobIds ->
+                    mutableUiState.update { current ->
+                        current.copy(
+                            isRunning = false,
+                            progress = null,
+                            currentPercent = null,
+                            queuedCount = jobIds.size,
+                            message = if (jobIds.size == 1) {
+                                "Import queued."
+                            } else {
+                                "${jobIds.size} imports queued."
+                            }
+                        )
+                    }
                 }
-            }
-
-            mutableUiState.update { current ->
-                current.copy(
-                    isRunning = false,
-                    progress = null,
-                    currentPercent = null,
-                    result = result
-                )
-            }
+                .onFailure { throwable ->
+                    mutableUiState.update { current ->
+                        current.copy(
+                            isRunning = false,
+                            message = throwable.localizedMessage
+                                ?: "Fenlzer could not queue these files."
+                        )
+                    }
+                }
         }
     }
 
@@ -67,11 +71,11 @@ class LocalImportViewModel(
     }
 
     companion object {
-        fun factory(repository: LocalImportRepository?): ViewModelProvider.Factory =
+        fun factory(importQueueCoordinator: ImportQueueCoordinator?): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                    return LocalImportViewModel(repository) as T
+                    return LocalImportViewModel(importQueueCoordinator) as T
                 }
             }
     }
@@ -84,5 +88,7 @@ data class LocalImportUiState(
     val total: Int = 0,
     val currentFilename: String? = null,
     val currentPercent: Int? = null,
+    val queuedCount: Int = 0,
+    val message: String? = null,
     val result: LocalImportBatchResult? = null
 )

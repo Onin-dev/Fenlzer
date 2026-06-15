@@ -57,6 +57,7 @@ class SettingsScreenTest {
                             retryable = false
                         )
                     },
+                    onOpenDiagnostics = {},
                     appVersion = "test"
                 )
             }

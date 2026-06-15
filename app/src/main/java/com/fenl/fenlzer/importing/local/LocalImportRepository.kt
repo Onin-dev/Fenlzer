@@ -16,7 +16,13 @@ import com.fenl.fenlzer.data.local.entity.TrackOriginalMetadataEntity
 import com.fenl.fenlzer.data.storage.FenlzerStorage
 import com.fenl.fenlzer.domain.text.AudioTitleFormatter
 import com.fenl.fenlzer.domain.text.SearchNormalizer
+import com.fenl.fenlzer.importing.ImportPriorityClass
+import com.fenl.fenlzer.importing.ImportReason
+import com.fenl.fenlzer.importing.ImportSourceType
+import com.fenl.fenlzer.importing.ImportExecutionResult
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
@@ -33,6 +39,126 @@ class LocalImportRepository(
     private val now: () -> Long = { System.currentTimeMillis() },
     private val idFactory: () -> String = { UUID.randomUUID().toString() }
 ) {
+    suspend fun prepareImportJobs(uris: List<Uri>): List<ImportJobEntity> =
+        withContext(dispatchers.io) {
+            uris.map { uri ->
+                takeReadPermission(uri)
+                val source = sourceInfo(uri)
+                val format = SupportedAudioFormat.fromFilenameOrMimeType(
+                    source.displayName,
+                    source.mimeType
+                )
+                val createdAt = now()
+                ImportJobEntity(
+                    importJobId = idFactory(),
+                    jobType = JOB_TYPE_LOCAL_FILE,
+                    sourceType = ImportSourceType.LOCAL_FILE,
+                    reason = ImportReason.MANUAL_LOCAL,
+                    priorityClass = ImportPriorityClass.MANUAL,
+                    priority = PRIORITY_MANUAL,
+                    status = STATUS_QUEUED,
+                    sourceUrl = uri.toString(),
+                    targetFavourite = false,
+                    preferredFormat = format?.label.orEmpty(),
+                    technicalDetailsJson = source.displayName,
+                    createdAt = createdAt,
+                    updatedAt = createdAt
+                ).also { job -> importDao.upsertJob(job) }
+            }
+        }
+
+    suspend fun executeImportJob(
+        importJobId: String,
+        onProgress: (LocalImportProgress) -> Unit = {}
+    ): ImportExecutionResult = withContext(dispatchers.io) {
+        val job = importDao.getJob(importJobId)
+            ?: return@withContext ImportExecutionResult.TerminalFailure("Import job not found.")
+        if (job.status == STATUS_CANCELLED) return@withContext ImportExecutionResult.Cancelled
+        val sourceUri = job.sourceUrl?.let(Uri::parse)
+            ?: return@withContext ImportExecutionResult.TerminalFailure("The selected file is unavailable.")
+
+        importUri(
+            uri = sourceUri,
+            currentIndex = 1,
+            total = 1,
+            onProgress = onProgress,
+            existingJob = job
+        )
+        when (val latest = importDao.getJob(importJobId)) {
+            null -> ImportExecutionResult.TerminalFailure("Import job not found.")
+            else -> when (latest.status) {
+                STATUS_COMPLETED, STATUS_DUPLICATE -> ImportExecutionResult.Completed
+                STATUS_CANCELLED -> ImportExecutionResult.Cancelled
+                STATUS_NEEDS_ATTENTION -> ImportExecutionResult.RetryableFailure(latest.errorMessage)
+                else -> ImportExecutionResult.TerminalFailure(latest.errorMessage)
+            }
+        }
+    }
+
+    suspend fun cancelImport(importJobId: String) = withContext(dispatchers.io) {
+        val job = importDao.getJob(importJobId) ?: return@withContext
+        cleanupTemporaryFiles(importJobId)
+        importDao.upsertJob(
+            job.copy(
+                status = STATUS_CANCELLED,
+                errorCode = null,
+                errorMessage = "Cancelled by user.",
+                isVisibleInActiveImports = true,
+                updatedAt = now(),
+                completedAt = now()
+            )
+        )
+        if (importDao.countHistoryForJob(importJobId) == 0) {
+            insertHistory(
+                importJobId = importJobId,
+                result = HISTORY_CANCELLED,
+                displayTitle = job.technicalDetailsJson ?: "Local import",
+                friendlyMessage = "Cancelled by user.",
+                sourceUrl = job.sourceUrl
+            )
+        }
+    }
+
+    suspend fun prepareRetry(importJobId: String) = withContext(dispatchers.io) {
+        val job = importDao.getJob(importJobId) ?: return@withContext
+        importDao.upsertJob(
+            job.copy(
+                status = STATUS_QUEUED,
+                progressPercent = 0,
+                errorCode = null,
+                errorMessage = null,
+                attemptCount = 0,
+                isVisibleInActiveImports = true,
+                completedAt = null,
+                updatedAt = now()
+            )
+        )
+    }
+
+    suspend fun finalizeRetryExhausted(importJobId: String) = withContext(dispatchers.io) {
+        val job = importDao.getJob(importJobId) ?: return@withContext
+        val message = job.errorMessage ?: "This local import failed after three attempts."
+        importDao.upsertJob(
+            job.copy(
+                status = STATUS_FAILED,
+                errorMessage = message,
+                isVisibleInActiveImports = true,
+                completedAt = now(),
+                updatedAt = now()
+            )
+        )
+        if (importDao.countHistoryForJob(importJobId) == 0) {
+            insertHistory(
+                importJobId = importJobId,
+                result = HISTORY_FAILED,
+                displayTitle = job.technicalDetailsJson ?: "Local import",
+                errorCode = job.errorCode,
+                friendlyMessage = message,
+                sourceUrl = job.sourceUrl
+            )
+        }
+    }
+
     suspend fun importUris(
         uris: List<Uri>,
         onProgress: (LocalImportProgress) -> Unit = {}
@@ -59,23 +185,29 @@ class LocalImportRepository(
         uri: Uri,
         currentIndex: Int,
         total: Int,
-        onProgress: (LocalImportProgress) -> Unit
+        onProgress: (LocalImportProgress) -> Unit,
+        existingJob: ImportJobEntity? = null
     ): LocalImportItemResult {
+        storage.ensureDirectories()
         takeReadPermission(uri)
 
         val source = sourceInfo(uri)
         val filename = source.displayName
         val format = SupportedAudioFormat.fromFilenameOrMimeType(filename, source.mimeType)
-        val importJobId = idFactory()
+        val importJobId = existingJob?.importJobId ?: idFactory()
         val createdAt = now()
-        var job = ImportJobEntity(
+        var job = existingJob ?: ImportJobEntity(
             importJobId = importJobId,
             jobType = JOB_TYPE_LOCAL_FILE,
+            sourceType = ImportSourceType.LOCAL_FILE,
+            reason = ImportReason.MANUAL_LOCAL,
+            priorityClass = ImportPriorityClass.MANUAL,
             priority = PRIORITY_MANUAL,
             status = STATUS_QUEUED,
             sourceUrl = uri.toString(),
             targetFavourite = false,
             preferredFormat = format?.label ?: "",
+            technicalDetailsJson = filename,
             createdAt = createdAt,
             updatedAt = createdAt
         )
@@ -88,6 +220,9 @@ class LocalImportRepository(
             errorMessage: String? = null,
             completedAt: Long? = null
         ) {
+            if (importDao.getJob(importJobId)?.status == STATUS_CANCELLED) {
+                throw CancellationException("Cancelled by user.")
+            }
             job = job.copy(
                 status = status,
                 progressPercent = progressPercent,
@@ -127,7 +262,13 @@ class LocalImportRepository(
             )
         }
 
-        val tempFile = File.createTempFile("local-import-", ".${format.extension}", storage.tempImportDir)
+        val tempFile = File.createTempFile(
+            "local-import-$importJobId-",
+            ".${format.extension}",
+            storage.tempImportDir
+        )
+        var stagedAudioFile: File? = null
+        var trackInserted = false
 
         return try {
             onProgress(
@@ -164,7 +305,7 @@ class LocalImportRepository(
                 val duplicateTitle = duplicate.displayTitle()
                 val message = "Already imported as $duplicateTitle."
                 updateJob(
-                    status = STATUS_FAILED,
+                    status = STATUS_DUPLICATE,
                     progressPercent = 100,
                     errorCode = ERROR_DUPLICATE,
                     errorMessage = message,
@@ -190,6 +331,7 @@ class LocalImportRepository(
             }
 
             val finalAudioFile = storage.audioFile(copyResult.sha256, format.extension)
+            stagedAudioFile = finalAudioFile
             moveTempFile(tempFile, finalAudioFile)
             val metadata = extractMetadata(
                 file = finalAudioFile,
@@ -220,6 +362,7 @@ class LocalImportRepository(
             )
 
             trackDao.insertTrackWithOriginalMetadata(track, originalMetadata)
+            trackInserted = true
             updateJob(
                 status = STATUS_COMPLETED,
                 progressPercent = 100,
@@ -261,25 +404,29 @@ class LocalImportRepository(
             )
         } catch (cancellation: CancellationException) {
             tempFile.delete()
+            if (!trackInserted) stagedAudioFile?.delete()
             throw cancellation
         } catch (throwable: Throwable) {
             tempFile.delete()
+            if (!trackInserted) stagedAudioFile?.delete()
             val message = "Import failed: ${throwable.localizedMessage ?: "Unable to copy this file."}"
             updateJob(
-                status = STATUS_FAILED,
+                status = if (existingJob != null) STATUS_NEEDS_ATTENTION else STATUS_FAILED,
                 errorCode = ERROR_COPY_FAILED,
                 errorMessage = message,
-                completedAt = now()
+                completedAt = if (existingJob != null) null else now()
             )
-            insertHistory(
-                importJobId = importJobId,
-                result = HISTORY_FAILED,
-                displayTitle = filename,
-                errorCode = ERROR_COPY_FAILED,
-                friendlyMessage = message,
-                technicalDetailsJson = throwable::class.qualifiedName,
-                sourceUrl = uri.toString()
-            )
+            if (existingJob == null) {
+                insertHistory(
+                    importJobId = importJobId,
+                    result = HISTORY_FAILED,
+                    displayTitle = filename,
+                    errorCode = ERROR_COPY_FAILED,
+                    friendlyMessage = message,
+                    technicalDetailsJson = throwable::class.qualifiedName,
+                    sourceUrl = uri.toString()
+                )
+            }
             LocalImportItemResult(
                 filename = filename,
                 displayTitle = filename,
@@ -318,7 +465,7 @@ class LocalImportRepository(
         return metadataExtractor.extract(file)
     }
 
-    private fun copyUriToTempFile(
+    private suspend fun copyUriToTempFile(
         uri: Uri,
         tempFile: File,
         totalBytes: Long?,
@@ -335,6 +482,7 @@ class LocalImportRepository(
             tempFile.outputStream().use { target ->
                 val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                 while (true) {
+                    currentCoroutineContext().ensureActive()
                     val read = source.read(buffer)
                     if (read == -1) break
                     target.write(buffer, 0, read)
@@ -367,6 +515,13 @@ class LocalImportRepository(
             tempFile.copyTo(finalAudioFile, overwrite = false)
             tempFile.delete()
         }
+    }
+
+    private fun cleanupTemporaryFiles(importJobId: String) {
+        storage.ensureDirectories()
+        storage.tempImportDir.listFiles()
+            ?.filter { file -> file.name.startsWith("local-import-$importJobId-") }
+            ?.forEach(File::delete)
     }
 
     private suspend fun persistEmbeddedArtwork(bytes: ByteArray): ThumbnailAssetEntity? {
@@ -406,12 +561,18 @@ class LocalImportRepository(
         technicalDetailsJson: String? = null,
         sourceUrl: String? = null
     ) {
+        val job = importDao.getJob(importJobId)
         importDao.insertHistoryEntry(
             ImportHistoryEntryEntity(
                 historyId = idFactory(),
                 importJobId = importJobId,
                 result = result,
-                reason = "Manual local import",
+                reason = job?.reason ?: ImportReason.MANUAL_LOCAL,
+                sourceType = job?.sourceType ?: ImportSourceType.LOCAL_FILE,
+                jobType = job?.jobType ?: JOB_TYPE_LOCAL_FILE,
+                requestedFormat = job?.preferredFormat,
+                finalFormat = job?.actualFormat,
+                pendingActionType = job?.pendingActionType,
                 trackId = trackId,
                 sourceUrl = sourceUrl,
                 youtubeVideoId = null,
@@ -495,7 +656,9 @@ class LocalImportRepository(
             discNumber = discNumber,
             durationMs = durationMs,
             notes = "",
-            sourceType = "LOCAL_FILE",
+            sourceType = ImportSourceType.LOCAL_FILE,
+            importReason = ImportReason.MANUAL_LOCAL,
+            requestedDownloadFormat = format.label,
             youtubeVideoId = null,
             sourceUrl = null,
             originalFilename = filename,
@@ -570,15 +733,19 @@ class LocalImportRepository(
 
     companion object {
         private const val JOB_TYPE_LOCAL_FILE = "LOCAL_FILE"
-        private const val PRIORITY_MANUAL = 100
+        private const val PRIORITY_MANUAL = 1_000
         private const val STATUS_QUEUED = "QUEUED"
         private const val STATUS_COPYING = "COPYING"
         private const val STATUS_EXTRACTING_METADATA = "EXTRACTING_METADATA"
         private const val STATUS_COMPLETED = "COMPLETED"
+        private const val STATUS_DUPLICATE = "DUPLICATE"
+        private const val STATUS_CANCELLED = "CANCELLED"
+        private const val STATUS_NEEDS_ATTENTION = "NEEDS_ATTENTION"
         private const val STATUS_FAILED = "FAILED"
         private const val HISTORY_SUCCESS = "SUCCESS"
         private const val HISTORY_DUPLICATE = "DUPLICATE"
         private const val HISTORY_FAILED = "FAILED"
+        private const val HISTORY_CANCELLED = "CANCELLED"
         private const val ERROR_UNSUPPORTED_FORMAT = "UNSUPPORTED_FORMAT"
         private const val ERROR_DUPLICATE = "DUPLICATE_AUDIO_HASH"
         private const val ERROR_COPY_FAILED = "LOCAL_COPY_FAILED"

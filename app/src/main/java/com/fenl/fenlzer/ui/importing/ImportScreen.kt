@@ -45,6 +45,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -99,6 +101,9 @@ fun ImportScreen(
     onCancelYoutubeImport: (String) -> Unit,
     onRetryYoutubeImport: (String) -> Unit,
     onMoveYoutubeImport: (String, Int) -> Unit,
+    onDismissYoutubeImport: (String) -> Unit,
+    onEnterActiveImports: () -> Unit,
+    onLeaveActiveImports: () -> Unit,
     onHistoryFilterChanged: (ImportHistoryFilter) -> Unit,
     onClearYoutubeHistory: () -> Unit,
     onRetryYoutubeHistoryItem: (ImportHistoryUiItem) -> Unit,
@@ -107,12 +112,20 @@ fun ImportScreen(
     onOpenSongDetails: (String) -> Unit,
     onClearResult: () -> Unit,
     onClearYoutubeResult: () -> Unit,
+    activeImportsRequestId: Int = 0,
     modifier: Modifier = Modifier
 ) {
     var selectedImportSectionName by rememberSaveable { mutableStateOf(ImportSection.HOME.name) }
     val selectedImportSection = selectedImportSectionName.importSectionOrDefault()
 
+    LaunchedEffect(activeImportsRequestId) {
+        if (activeImportsRequestId > 0) {
+            selectedImportSectionName = ImportSection.ACTIVE_IMPORTS.name
+        }
+    }
+
     BackHandler(enabled = selectedImportSection != ImportSection.HOME) {
+        if (selectedImportSection == ImportSection.ACTIVE_IMPORTS) onLeaveActiveImports()
         selectedImportSectionName = ImportSection.HOME.name
     }
     val scrollState = rememberScrollState()
@@ -180,9 +193,16 @@ fun ImportScreen(
             }
 
             ImportSection.ACTIVE_IMPORTS -> {
+                DisposableEffect(Unit) {
+                    onEnterActiveImports()
+                    onDispose(onLeaveActiveImports)
+                }
                 ImportDetailHeader(
                     title = ImportSection.ACTIVE_IMPORTS.label,
-                    onBack = { selectedImportSectionName = ImportSection.HOME.name }
+                    onBack = {
+                        onLeaveActiveImports()
+                        selectedImportSectionName = ImportSection.HOME.name
+                    }
                 )
                 ActiveImportsPanel(
                     activeJobs = youtubeState.activeJobs,
@@ -191,6 +211,7 @@ fun ImportScreen(
                     onCancelImport = onCancelYoutubeImport,
                     onRetryImport = onRetryYoutubeImport,
                     onMoveImport = onMoveYoutubeImport,
+                    onDismissImport = onDismissYoutubeImport,
                     onOpenSongDetails = onOpenSongDetails,
                     onClearYoutubeResult = onClearYoutubeResult
                 )
@@ -398,6 +419,14 @@ private fun DeviceImportPanel(
 
         if (state.isRunning) {
             LocalImportProgressPanel(state = state)
+        }
+
+        state.message?.let { message ->
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
         }
 
         state.result?.let { result ->
@@ -926,6 +955,7 @@ private fun ActiveImportsPanel(
     onCancelImport: (String) -> Unit,
     onRetryImport: (String) -> Unit,
     onMoveImport: (String, Int) -> Unit,
+    onDismissImport: (String) -> Unit,
     onOpenSongDetails: (String) -> Unit,
     onClearYoutubeResult: () -> Unit
 ) {
@@ -950,12 +980,33 @@ private fun ActiveImportsPanel(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         } else {
-            activeJobs.forEach { job ->
-                ActiveImportRow(
-                    job = job,
+            val upcoming = activeJobs.filter { it.status == "QUEUED" }
+            val finished = activeJobs.filter { it.status.isTerminalImportStatus() }
+            val downloading = activeJobs - upcoming.toSet() - finished.toSet()
+            ActiveImportSection(
+                title = "Downloading Now",
+                jobs = downloading,
+                onCancelImport = onCancelImport,
+                onRetryImport = onRetryImport,
+                onMoveImport = onMoveImport,
+                onDismissImport = onDismissImport
+            )
+            ActiveImportSection(
+                title = "Upcoming",
+                jobs = upcoming,
+                onCancelImport = onCancelImport,
+                onRetryImport = onRetryImport,
+                onMoveImport = onMoveImport,
+                onDismissImport = onDismissImport
+            )
+            if (finished.isNotEmpty()) {
+                ActiveImportSection(
+                    title = "Recently Finished",
+                    jobs = finished,
                     onCancelImport = onCancelImport,
                     onRetryImport = onRetryImport,
-                    onMoveImport = onMoveImport
+                    onMoveImport = onMoveImport,
+                    onDismissImport = onDismissImport
                 )
             }
         }
@@ -979,11 +1030,45 @@ private fun ActiveImportsPanel(
 }
 
 @Composable
+private fun ActiveImportSection(
+    title: String,
+    jobs: List<ActiveImportUiItem>,
+    onCancelImport: (String) -> Unit,
+    onRetryImport: (String) -> Unit,
+    onMoveImport: (String, Int) -> Unit,
+    onDismissImport: (String) -> Unit
+) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    if (jobs.isEmpty()) {
+        Text(
+            text = "None",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    } else {
+        jobs.forEach { job ->
+            ActiveImportRow(
+                job = job,
+                onCancelImport = onCancelImport,
+                onRetryImport = onRetryImport,
+                onMoveImport = onMoveImport,
+                onDismissImport = onDismissImport
+            )
+        }
+    }
+}
+
+@Composable
 private fun ActiveImportRow(
     job: ActiveImportUiItem,
     onCancelImport: (String) -> Unit,
     onRetryImport: (String) -> Unit,
-    onMoveImport: (String, Int) -> Unit
+    onMoveImport: (String, Int) -> Unit,
+    onDismissImport: (String) -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -1068,6 +1153,14 @@ private fun ActiveImportRow(
                     )
                 }
             }
+            if (job.dismissible) {
+                IconButton(onClick = { onDismissImport(job.importJobId) }) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "Dismiss failed import"
+                    )
+                }
+            }
         }
         if (job.progressPercent != null) {
             LinearProgressIndicator(
@@ -1092,6 +1185,7 @@ private fun YoutubeImportResultSummary(
     onClear: () -> Unit
 ) {
     val icon = when (result.outcome) {
+        YoutubeImportOutcome.QUEUED -> Icons.Rounded.Sync
         YoutubeImportOutcome.SUCCESS -> Icons.Rounded.CheckCircle
         YoutubeImportOutcome.DUPLICATE -> Icons.Rounded.ContentCopy
         YoutubeImportOutcome.FAILED -> Icons.Rounded.Error
@@ -1128,6 +1222,14 @@ private fun YoutubeImportResultSummary(
         }
     }
 }
+
+private fun String.isTerminalImportStatus(): Boolean = this in setOf(
+    "COMPLETED",
+    "TRANSFER_CONFIRMED",
+    "DUPLICATE",
+    "FAILED",
+    "CANCELLED"
+)
 
 @Composable
 private fun ImportHistoryPanel(
@@ -1432,7 +1534,8 @@ private fun activeImportSubtitle(job: ActiveImportUiItem): String =
     listOfNotNull(
         job.sourceLabel,
         job.status.labelForImport(),
-        job.queuePosition?.let { "queue #$it" }
+        job.queuePosition?.let { "queue #$it" },
+        job.attemptCount.takeIf { it > 0 }?.let { "attempt $it/${job.maxAttempts}" }
     ).joinToString(" - ")
 
 private fun playlistPreviewStatus(

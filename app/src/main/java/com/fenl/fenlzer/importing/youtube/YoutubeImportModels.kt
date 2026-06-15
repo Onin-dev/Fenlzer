@@ -33,6 +33,7 @@ data class YoutubeImportItemResult(
 )
 
 enum class YoutubeImportOutcome {
+    QUEUED,
     SUCCESS,
     DUPLICATE,
     FAILED
@@ -49,7 +50,10 @@ data class ActiveImportUiItem(
     val thumbnailUrl: String?,
     val errorMessage: String?,
     val retryable: Boolean,
-    val cancellable: Boolean
+    val cancellable: Boolean,
+    val attemptCount: Int,
+    val maxAttempts: Int,
+    val dismissible: Boolean
 )
 
 data class ImportHistoryUiItem(

@@ -26,6 +26,10 @@ interface ImportDao {
             'EXTRACTING_METADATA',
             'NEEDS_ATTENTION'
         )
+        OR (
+            isVisibleInActiveImports = 1
+            AND status IN ('COMPLETED', 'TRANSFER_CONFIRMED', 'DUPLICATE', 'FAILED', 'CANCELLED')
+        )
         ORDER BY priority DESC, createdAt ASC
         """
     )
@@ -54,6 +58,19 @@ interface ImportDao {
     @Query(
         """
         SELECT * FROM import_jobs
+        WHERE status IN (
+            'QUEUED', 'DOWNLOADING_METADATA', 'DOWNLOADING', 'POST_PROCESSING',
+            'PROCESSING', 'RUNNING', 'READY_FOR_TRANSFER', 'COPYING',
+            'EXTRACTING_METADATA', 'NEEDS_ATTENTION'
+        )
+        ORDER BY priority DESC, createdAt ASC
+        """
+    )
+    suspend fun getRunnableJobs(): List<ImportJobEntity>
+
+    @Query(
+        """
+        SELECT * FROM import_jobs
         WHERE jobType IN ('YOUTUBE_SEARCH', 'YOUTUBE_PLAYLIST_ITEM')
           AND status IN (
               'QUEUED',
@@ -74,6 +91,37 @@ interface ImportDao {
 
     @Query("SELECT * FROM import_jobs WHERE importJobId = :importJobId")
     suspend fun getJob(importJobId: String): ImportJobEntity?
+
+    @Query(
+        """
+        UPDATE import_jobs
+        SET attemptCount = attemptCount + 1,
+            updatedAt = :updatedAt
+        WHERE importJobId = :importJobId
+        """
+    )
+    suspend fun incrementAttempt(importJobId: String, updatedAt: Long)
+
+    @Query(
+        """
+        UPDATE import_jobs
+        SET isVisibleInActiveImports = 0
+        WHERE status IN ('COMPLETED', 'TRANSFER_CONFIRMED', 'DUPLICATE', 'CANCELLED')
+        """
+    )
+    suspend fun acknowledgeFinishedJobs()
+
+    @Query(
+        """
+        UPDATE import_jobs
+        SET isVisibleInActiveImports = 0
+        WHERE importJobId = :importJobId AND status = 'FAILED'
+        """
+    )
+    suspend fun dismissFailedJob(importJobId: String)
+
+    @Query("SELECT COUNT(*) FROM import_history_entries WHERE importJobId = :importJobId")
+    suspend fun countHistoryForJob(importJobId: String): Int
 
     @Upsert
     suspend fun upsertJob(job: ImportJobEntity)

@@ -29,9 +29,16 @@ import com.fenl.fenlzer.data.remote.SearchResult
 import com.fenl.fenlzer.data.storage.FenlzerStorage
 import com.fenl.fenlzer.domain.text.AudioTitleFormatter
 import com.fenl.fenlzer.domain.text.SearchNormalizer
+import com.fenl.fenlzer.importing.ImportIntent
+import com.fenl.fenlzer.importing.ImportExecutionResult
+import com.fenl.fenlzer.importing.ImportPriorityClass
+import com.fenl.fenlzer.importing.ImportReason
+import com.fenl.fenlzer.importing.ImportSourceType
 import com.fenl.fenlzer.importing.local.Sha256
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
@@ -62,10 +69,22 @@ class YoutubeImportRepository(
     fun observeActiveImports(): Flow<List<ActiveImportUiItem>> {
         return importDao.observeActiveJobs().map { jobs ->
             val compactStatuses = loadCompactStatuses(jobs)
+            val localQueuePositions = jobs
+                .filter { job -> job.status == STATUS_QUEUED }
+                .sortedWith(compareByDescending<ImportJobEntity> { it.priority }.thenBy { it.createdAt })
+                .mapIndexed { index, job -> job.importJobId to (index + 1) }
+                .toMap()
             jobs.map { job ->
                 val remoteItem = job.remoteItem()
                 val compactStatus = job.apiJobId?.let(compactStatuses::get)
-                val effectiveStatus = compactStatus?.effectiveStatus() ?: job.status
+                val compactEffectiveStatus = compactStatus?.effectiveStatus()
+                val effectiveStatus = when {
+                    job.status in localTransferStatuses -> job.status
+                    compactEffectiveStatus != null &&
+                        ApiJobState.isTerminalSuccess(compactEffectiveStatus) &&
+                        job.status != ApiJobState.TRANSFER_CONFIRMED -> ApiJobState.READY_FOR_TRANSFER
+                    else -> compactEffectiveStatus ?: job.status
+                }
                 ActiveImportUiItem(
                     importJobId = job.importJobId,
                     apiJobId = job.apiJobId,
@@ -73,12 +92,16 @@ class YoutubeImportRepository(
                     sourceLabel = job.sourceLabel(),
                     status = effectiveStatus,
                     progressPercent = compactStatus?.progressPercent ?: job.progressPercent,
-                    queuePosition = compactStatus?.queuePosition,
+                    queuePosition = compactStatus?.queuePosition
+                        ?: localQueuePositions[job.importJobId],
                     thumbnailUrl = remoteItem?.thumbnailUrl,
                     errorMessage = compactStatus?.errorMessage ?: job.errorMessage,
                     retryable = effectiveStatus in retryableLocalStatuses ||
                         compactStatus?.retryable == true,
-                    cancellable = effectiveStatus in cancellableLocalStatuses
+                    cancellable = effectiveStatus in cancellableLocalStatuses,
+                    attemptCount = job.attemptCount,
+                    maxAttempts = job.maxAttempts,
+                    dismissible = effectiveStatus == STATUS_FAILED
                 )
             }
         }
@@ -93,7 +116,7 @@ class YoutubeImportRepository(
                     title = entry.displayTitle,
                     result = entry.result,
                     reason = entry.reason,
-                    sourceLabel = if (entry.youtubeVideoId != null) "YouTube" else "Local file",
+                    sourceLabel = entry.sourceType.toSourceLabel(),
                     message = entry.friendlyMessage,
                     trackId = entry.trackId,
                     createdAt = entry.createdAt
@@ -153,6 +176,66 @@ class YoutubeImportRepository(
                 .toPreview()
         }
 
+    suspend fun prepareSearchImport(
+        result: YoutubeSearchResultItem,
+        intent: ImportIntent = ImportIntent.youtubeSearch()
+    ): YoutubeImportItemResult = withContext(dispatchers.io) {
+        storage.ensureDirectories()
+        val createdAt = now()
+        remoteDiscoverDao.upsertRemoteItem(result.toRemoteItem(createdAt))
+        val job = ImportJobEntity(
+            importJobId = idFactory(),
+            apiJobId = null,
+            jobType = JOB_TYPE_YOUTUBE_SEARCH,
+            sourceType = intent.sourceType,
+            reason = intent.reason,
+            priorityClass = intent.priorityClass,
+            pendingActionType = intent.pendingActionType,
+            priority = intent.priorityClass.toLocalPriority(),
+            status = STATUS_QUEUED,
+            sourceUrl = result.sourceUrl,
+            youtubeVideoId = result.youtubeVideoId,
+            remoteItemId = result.remoteItemId,
+            targetPlaylistId = intent.targetPlaylistId,
+            targetFavourite = intent.targetFavourite,
+            preferredFormat = ApiPreferredFormat.M4A_AAC,
+            progressPercent = 0,
+            technicalDetailsJson = result.title,
+            createdAt = createdAt,
+            updatedAt = createdAt
+        )
+        importDao.upsertJob(job)
+        YoutubeImportItemResult(
+            importJobId = job.importJobId,
+            trackId = null,
+            displayTitle = result.title,
+            outcome = YoutubeImportOutcome.QUEUED,
+            message = "Import queued."
+        )
+    }
+
+    suspend fun executeImportJob(
+        importJobId: String,
+        onProgress: (YoutubeImportProgress) -> Unit = {}
+    ): ImportExecutionResult = withContext(dispatchers.io) {
+        val job = importDao.getJob(importJobId)
+            ?: return@withContext ImportExecutionResult.TerminalFailure("Import job not found.")
+        if (job.status == ApiJobState.CANCELLED) return@withContext ImportExecutionResult.Cancelled
+        resumeJob(job, job.toRecoveredSearchResult(), onProgress)
+        val latest = importDao.getJob(importJobId)
+            ?: return@withContext ImportExecutionResult.TerminalFailure("Import job not found.")
+        when (latest.status) {
+            ApiJobState.TRANSFER_CONFIRMED, STATUS_COMPLETED, STATUS_DUPLICATE ->
+                ImportExecutionResult.Completed
+            ApiJobState.CANCELLED -> ImportExecutionResult.Cancelled
+            STATUS_NEEDS_ATTENTION -> ImportExecutionResult.RetryableFailure(latest.errorMessage)
+            else -> {
+                ensureTerminalFailureHistory(latest)
+                ImportExecutionResult.TerminalFailure(latest.errorMessage)
+            }
+        }
+    }
+
     suspend fun importPlaylistItems(
         preview: YoutubePlaylistPreview,
         remoteItemIds: Set<String>,
@@ -188,6 +271,9 @@ class YoutubeImportRepository(
                 importJobId = importJobId,
                 apiJobId = null,
                 jobType = JOB_TYPE_YOUTUBE_PLAYLIST_ITEM,
+                sourceType = ImportSourceType.YOUTUBE_PLAYLIST,
+                reason = ImportReason.YOUTUBE_PLAYLIST,
+                priorityClass = ImportPriorityClass.MANUAL,
                 priority = PRIORITY_MANUAL,
                 status = STATUS_QUEUED,
                 sourceUrl = item.sourceUrl,
@@ -236,33 +322,45 @@ class YoutubeImportRepository(
             )
         }
 
-        resumeRecoverableSearchImports()
+        selectedItems.mapNotNull { item ->
+            val job = jobsByClientId.values.firstOrNull { it.remoteItemId == item.remoteItemId }
+                ?: return@mapNotNull null
+            YoutubeImportItemResult(
+                importJobId = job.importJobId,
+                trackId = null,
+                displayTitle = item.title,
+                outcome = YoutubeImportOutcome.QUEUED,
+                message = "Import queued."
+            )
+        }
     }
 
     suspend fun cancelImport(importJobId: String) = withContext(dispatchers.io) {
         val job = importDao.getJob(importJobId) ?: return@withContext
-        val status = if (job.apiJobId != null) {
-            normalizeJobStatus(apiRepository.cancelJob(job.apiJobId, "User cancelled from Active Imports").status, null)
-        } else {
-            ApiJobState.CANCELLED
-        }
         val updated = job.copy(
-            status = status,
+            status = ApiJobState.CANCELLED,
             errorCode = null,
             errorMessage = "Cancelled by user.",
             progressPercent = job.progressPercent,
+            isVisibleInActiveImports = true,
             updatedAt = now(),
             completedAt = now()
         )
         importDao.upsertJob(updated)
-        insertHistory(
-            importJobId = job.importJobId,
-            result = HISTORY_CANCELLED,
-            displayTitle = job.displayTitle(),
-            youtubeVideoId = job.youtubeVideoId,
-            sourceUrl = job.sourceUrl,
-            friendlyMessage = "Cancelled by user."
-        )
+        cleanupTemporaryFiles(importJobId)
+        if (importDao.countHistoryForJob(importJobId) == 0) {
+            insertHistory(
+                importJobId = job.importJobId,
+                result = HISTORY_CANCELLED,
+                displayTitle = job.displayTitle(),
+                youtubeVideoId = job.youtubeVideoId,
+                sourceUrl = job.sourceUrl,
+                friendlyMessage = "Cancelled by user."
+            )
+        }
+        job.apiJobId?.let { apiJobId ->
+            apiRepository.cancelJob(apiJobId, "User cancelled from Active Imports")
+        }
     }
 
     suspend fun retryImport(importJobId: String): YoutubeImportItemResult? = withContext(dispatchers.io) {
@@ -276,6 +374,8 @@ class YoutubeImportRepository(
                     progressPercent = 0,
                     errorCode = null,
                     errorMessage = null,
+                    attemptCount = 0,
+                    isVisibleInActiveImports = true,
                     completedAt = null,
                     updatedAt = now()
                 )
@@ -287,12 +387,35 @@ class YoutubeImportRepository(
                     progressPercent = 0,
                     errorCode = null,
                     errorMessage = null,
+                    attemptCount = 0,
+                    isVisibleInActiveImports = true,
                     completedAt = null,
                     updatedAt = now()
                 )
             )
         }
-        resumeRecoverableSearchImports().firstOrNull()
+        val updated = importDao.getJob(importJobId) ?: return@withContext null
+        YoutubeImportItemResult(
+            importJobId = updated.importJobId,
+            trackId = null,
+            displayTitle = updated.displayTitle(),
+            outcome = YoutubeImportOutcome.QUEUED,
+            message = "Retry queued."
+        )
+    }
+
+    suspend fun finalizeRetryExhausted(importJobId: String) = withContext(dispatchers.io) {
+        val job = importDao.getJob(importJobId) ?: return@withContext
+        val message = job.errorMessage ?: "This download failed after three attempts."
+        val failed = job.copy(
+            status = STATUS_FAILED,
+            errorMessage = message,
+            isVisibleInActiveImports = true,
+            completedAt = now(),
+            updatedAt = now()
+        )
+        importDao.upsertJob(failed)
+        ensureTerminalFailureHistory(failed)
     }
 
     suspend fun retryHistoryItem(historyItem: ImportHistoryUiItem): YoutubeImportItemResult? {
@@ -301,6 +424,9 @@ class YoutubeImportRepository(
 
     suspend fun moveImport(importJobId: String, offset: Int) = withContext(dispatchers.io) {
         val activeJobs = importDao.getActiveJobs()
+        val targetPriorityClass = activeJobs.firstOrNull { it.importJobId == importJobId }
+            ?.priorityClass
+            ?: return@withContext
         val compactStatuses = loadCompactStatuses(activeJobs)
         val jobs = activeJobs
             .filter { job ->
@@ -310,6 +436,7 @@ class YoutubeImportRepository(
                     ?: normalizeJobStatus(job.status, null)
                 effectiveStatus == STATUS_QUEUED
             }
+            .filter { job -> job.priorityClass == targetPriorityClass }
             .sortedWith(compareByDescending<ImportJobEntity> { it.priority }.thenBy { it.createdAt })
         val index = jobs.indexOfFirst { it.importJobId == importJobId }
         if (index == -1) return@withContext
@@ -319,9 +446,14 @@ class YoutubeImportRepository(
             add(targetIndex, removeAt(index))
         }
         reordered.forEachIndexed { orderedIndex, job ->
+            val priorityBase = if (job.priorityClass == ImportPriorityClass.AUTO) {
+                PRIORITY_AUTO
+            } else {
+                PRIORITY_MANUAL
+            }
             importDao.upsertJob(
                 job.copy(
-                    priority = PRIORITY_MANUAL + (reordered.size - orderedIndex),
+                    priority = priorityBase + (reordered.size - orderedIndex),
                     updatedAt = now()
                 )
             )
@@ -339,7 +471,7 @@ class YoutubeImportRepository(
     suspend fun importSearchResult(
         result: YoutubeSearchResultItem,
         onProgress: (YoutubeImportProgress) -> Unit = {},
-        targetFavourite: Boolean = false
+        intent: ImportIntent = ImportIntent.youtubeSearch()
     ): YoutubeImportItemResult = withContext(dispatchers.io) {
         storage.ensureDirectories()
 
@@ -349,12 +481,17 @@ class YoutubeImportRepository(
             importJobId = idFactory(),
             apiJobId = null,
             jobType = JOB_TYPE_YOUTUBE_SEARCH,
-            priority = PRIORITY_MANUAL,
+            sourceType = intent.sourceType,
+            reason = intent.reason,
+            priorityClass = intent.priorityClass,
+            pendingActionType = intent.pendingActionType,
+            priority = intent.priorityClass.toLocalPriority(),
             status = STATUS_QUEUED,
             sourceUrl = result.sourceUrl,
             youtubeVideoId = result.youtubeVideoId,
                 remoteItemId = result.remoteItemId,
-                targetFavourite = targetFavourite,
+                targetPlaylistId = intent.targetPlaylistId,
+                targetFavourite = intent.targetFavourite,
             preferredFormat = ApiPreferredFormat.M4A_AAC,
             progressPercent = 0,
             technicalDetailsJson = result.title,
@@ -400,7 +537,7 @@ class YoutubeImportRepository(
             duplicateByStrongIdentifier(result)?.let { duplicate ->
                 val message = "Already imported as ${duplicate.displayTitle()}."
                 updateJob(
-                    status = STATUS_FAILED,
+                    status = STATUS_DUPLICATE,
                     progressPercent = 100,
                     errorCode = ERROR_DUPLICATE,
                     errorMessage = message,
@@ -439,10 +576,10 @@ class YoutubeImportRepository(
                         remoteItemId = result.remoteItemId
                     ),
                     jobType = JOB_TYPE_YOUTUBE_SEARCH,
-                    priorityClass = ApiPriorityClass.MANUAL,
-                    preferredFormat = ApiPreferredFormat.M4A_AAC,
+                    priorityClass = job.apiPriorityClass(),
+                    preferredFormat = job.preferredFormat,
                     fallbackToBestAvailable = true,
-                    reason = "MANUAL_SINGLE"
+                    reason = job.reason ?: ImportReason.MANUAL_SINGLE
                 )
             ).job
 
@@ -460,6 +597,7 @@ class YoutubeImportRepository(
             val imported = transferAndImport(
                 searchResult = result,
                 readyJob = readyJob,
+                importJob = job,
                 targetFavourite = job.targetFavourite,
                 updateJob = ::updateJob
             )
@@ -668,6 +806,22 @@ class YoutubeImportRepository(
 
         return try {
             duplicateByStrongIdentifier(searchResult)?.let { existingTrack ->
+                job.apiJobId?.let { apiJobId ->
+                    val remoteJob = apiRepository.getJob(apiJobId).job
+                    if (remoteJob.file?.available == true) {
+                        confirmTransferredFile(
+                            readyJob = remoteJob,
+                            sha256 = existingTrack.audioHash,
+                            sizeBytes = existingTrack.fileSizeBytes,
+                            localTrackId = existingTrack.trackId
+                        )
+                    } else if (!ApiJobState.isTerminalSuccess(remoteJob.effectiveStatus())) {
+                        apiRepository.cancelJob(
+                            apiJobId,
+                            "Local track already exists while restoring import"
+                        )
+                    }
+                }
                 val message = "Already imported as ${existingTrack.displayTitle()}."
                 updateJob(
                     status = ApiJobState.TRANSFER_CONFIRMED,
@@ -711,11 +865,11 @@ class YoutubeImportRepository(
                             sourceUrl = searchResult.sourceUrl,
                             remoteItemId = searchResult.remoteItemId
                         ),
-                        jobType = JOB_TYPE_YOUTUBE_SEARCH,
-                        priorityClass = ApiPriorityClass.MANUAL,
-                        preferredFormat = ApiPreferredFormat.M4A_AAC,
+                        jobType = localJob.jobType,
+                        priorityClass = localJob.apiPriorityClass(),
+                        preferredFormat = localJob.preferredFormat,
                         fallbackToBestAvailable = true,
-                        reason = "MANUAL_SINGLE"
+                        reason = localJob.reason ?: ImportReason.MANUAL_SINGLE
                     ),
                     idempotencyKey = "fenlzer_resume_${localJob.importJobId}"
                 ).job.also { createdJob ->
@@ -765,6 +919,7 @@ class YoutubeImportRepository(
             transferAndImport(
                 searchResult = searchResult,
                 readyJob = readyJob,
+                importJob = job,
                 targetFavourite = job.targetFavourite,
                 updateJob = ::updateJob
             )
@@ -891,6 +1046,7 @@ class YoutubeImportRepository(
     private suspend fun transferAndImport(
         searchResult: YoutubeSearchResultItem,
         readyJob: JobObject,
+        importJob: ImportJobEntity,
         targetFavourite: Boolean,
         updateJob: suspend (
             status: String,
@@ -929,7 +1085,13 @@ class YoutubeImportRepository(
             ?: readyJob.file?.filename
             ?: "${readyJob.source.youtubeVideoId ?: readyJob.apiJobId}.m4a"
         val extension = YoutubeTransferRules.extensionFromFilename(filename)
-        val tempFile = File.createTempFile("youtube-import-", ".$extension", storage.tempImportDir)
+        val tempFile = File.createTempFile(
+            "youtube-import-${importJob.importJobId}-",
+            ".$extension",
+            storage.tempImportDir
+        )
+        var stagedAudioFile: File? = null
+        var trackInserted = false
 
         return try {
             val transfer = streamToTempFile(body, tempFile) { percent ->
@@ -967,7 +1129,7 @@ class YoutubeImportRepository(
                 }
                 val message = "Already imported as ${duplicate.displayTitle()}."
                 insertHistory(
-                    importJobId = readyJob.clientJobId,
+                    importJobId = importJob.importJobId,
                     result = HISTORY_DUPLICATE,
                     displayTitle = searchResult.title,
                     trackId = duplicate.trackId,
@@ -977,7 +1139,7 @@ class YoutubeImportRepository(
                     errorCode = ERROR_DUPLICATE
                 )
                 return YoutubeImportItemResult(
-                    importJobId = readyJob.clientJobId.orEmpty(),
+                    importJobId = importJob.importJobId,
                     trackId = duplicate.trackId,
                     displayTitle = duplicate.displayTitle(),
                     outcome = YoutubeImportOutcome.DUPLICATE,
@@ -996,11 +1158,13 @@ class YoutubeImportRepository(
                 null
             )
             val finalAudioFile = storage.audioFile(transfer.sha256, extension)
+            stagedAudioFile = finalAudioFile
             moveTempFile(tempFile, finalAudioFile)
             val importedAt = now()
             val trackId = idFactory()
             val track = readyJob.toTrackEntity(
                 searchResult = searchResult,
+                importJob = importJob,
                 trackId = trackId,
                 internalFilename = finalAudioFile.name,
                 audioHash = transfer.sha256,
@@ -1011,6 +1175,7 @@ class YoutubeImportRepository(
             val originalMetadata = track.toOriginalMetadataEntity()
 
             trackDao.insertTrackWithOriginalMetadata(track, originalMetadata)
+            trackInserted = true
             markRemoteItemImported(searchResult.remoteItemId, trackId)
             confirmTransferredFile(
                 readyJob = readyJob,
@@ -1033,7 +1198,7 @@ class YoutubeImportRepository(
 
             val displayTitle = track.displayTitle()
             insertHistory(
-                importJobId = readyJob.clientJobId,
+                importJobId = importJob.importJobId,
                 result = HISTORY_SUCCESS,
                 displayTitle = displayTitle,
                 trackId = trackId,
@@ -1042,7 +1207,7 @@ class YoutubeImportRepository(
                 friendlyMessage = "Imported successfully."
             )
             YoutubeImportItemResult(
-                importJobId = readyJob.clientJobId.orEmpty(),
+                importJobId = importJob.importJobId,
                 trackId = trackId,
                 displayTitle = displayTitle,
                 outcome = YoutubeImportOutcome.SUCCESS,
@@ -1050,9 +1215,11 @@ class YoutubeImportRepository(
             )
         } catch (cancellation: CancellationException) {
             tempFile.delete()
+            if (!trackInserted) stagedAudioFile?.delete()
             throw cancellation
         } catch (throwable: Throwable) {
             tempFile.delete()
+            if (!trackInserted) stagedAudioFile?.delete()
             throw throwable
         }
     }
@@ -1090,6 +1257,7 @@ class YoutubeImportRepository(
                 tempFile.outputStream().use { target ->
                     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                     while (true) {
+                        currentCoroutineContext().ensureActive()
                         val read = source.read(buffer)
                         if (read == -1) break
                         target.write(buffer, 0, read)
@@ -1182,12 +1350,18 @@ class YoutubeImportRepository(
         errorCode: String? = null,
         technicalDetailsJson: String? = null
     ) {
+        val job = importJobId?.let { id -> importDao.getJob(id) }
         importDao.insertHistoryEntry(
             ImportHistoryEntryEntity(
                 historyId = idFactory(),
                 importJobId = importJobId,
                 result = result,
-                reason = "Manual YouTube search import",
+                reason = job?.reason ?: ImportReason.LEGACY_YOUTUBE,
+                sourceType = job?.sourceType ?: ImportSourceType.LEGACY_YOUTUBE,
+                jobType = job?.jobType,
+                requestedFormat = job?.preferredFormat,
+                finalFormat = job?.actualFormat,
+                pendingActionType = job?.pendingActionType,
                 trackId = trackId,
                 sourceUrl = sourceUrl,
                 youtubeVideoId = youtubeVideoId,
@@ -1198,6 +1372,26 @@ class YoutubeImportRepository(
                 createdAt = now()
             )
         )
+    }
+
+    private suspend fun ensureTerminalFailureHistory(job: ImportJobEntity) {
+        if (importDao.countHistoryForJob(job.importJobId) > 0) return
+        insertHistory(
+            importJobId = job.importJobId,
+            result = HISTORY_FAILED,
+            displayTitle = job.displayTitle(),
+            youtubeVideoId = job.youtubeVideoId,
+            sourceUrl = job.sourceUrl,
+            friendlyMessage = job.errorMessage ?: "This import failed.",
+            errorCode = job.errorCode
+        )
+    }
+
+    private fun cleanupTemporaryFiles(importJobId: String) {
+        storage.ensureDirectories()
+        storage.tempImportDir.listFiles()
+            ?.filter { file -> file.name.startsWith("youtube-import-$importJobId-") }
+            ?.forEach(File::delete)
     }
 
     private fun moveTempFile(tempFile: File, finalAudioFile: File) {
@@ -1363,6 +1557,7 @@ class YoutubeImportRepository(
 
     private fun JobObject.toTrackEntity(
         searchResult: YoutubeSearchResultItem,
+        importJob: ImportJobEntity,
         trackId: String,
         internalFilename: String,
         audioHash: String,
@@ -1395,7 +1590,9 @@ class YoutubeImportRepository(
             discNumber = null,
             durationMs = metadata?.durationMs ?: searchResult.durationMs ?: 0L,
             notes = "",
-            sourceType = "YOUTUBE",
+            sourceType = importJob.sourceType ?: ImportSourceType.LEGACY_YOUTUBE,
+            importReason = importJob.reason ?: ImportReason.LEGACY_YOUTUBE,
+            requestedDownloadFormat = importJob.preferredFormat,
             youtubeVideoId = sourceVideoId,
             sourceUrl = sourceUrl,
             originalFilename = file?.filename,
@@ -1440,12 +1637,25 @@ class YoutubeImportRepository(
     }
 
     private fun ImportJobEntity.sourceLabel(): String =
-        when (jobType) {
-            JOB_TYPE_YOUTUBE_SEARCH -> "YouTube search"
-            JOB_TYPE_YOUTUBE_PLAYLIST_ITEM -> "YouTube playlist"
-            "LOCAL_FILE" -> "Local file"
-            else -> jobType.replace('_', ' ').lowercase().replaceFirstChar { it.titlecase() }
-        }
+        sourceType.toSourceLabel()
+
+    private fun String?.toSourceLabel(): String = when (this) {
+        ImportSourceType.LOCAL_FILE -> "Local file"
+        ImportSourceType.YOUTUBE_SEARCH -> "YouTube search"
+        ImportSourceType.YOUTUBE_PLAYLIST -> "YouTube playlist"
+        ImportSourceType.DISCOVER_MANUAL -> "Discover"
+        ImportSourceType.DISCOVER_AUTO_FAVOURITE -> "Discover auto-favourite"
+        ImportSourceType.DISCOVER_AUTO_PLAYLIST -> "Discover auto-playlist"
+        ImportSourceType.LEGACY_YOUTUBE -> "YouTube"
+        else -> this?.replace('_', ' ')?.lowercase()?.replaceFirstChar { it.titlecase() }
+            ?: "Import"
+    }
+
+    private fun String.toLocalPriority(): Int =
+        if (this == ImportPriorityClass.AUTO) PRIORITY_AUTO else PRIORITY_MANUAL
+
+    private fun ImportJobEntity.apiPriorityClass(): String =
+        if (priorityClass == ImportPriorityClass.AUTO) ApiPriorityClass.AUTO else ApiPriorityClass.MANUAL
 
     private fun okhttp3.Headers.contentDispositionFilename(): String? {
         val disposition = this["Content-Disposition"] ?: return null
@@ -1463,10 +1673,13 @@ class YoutubeImportRepository(
     companion object {
         const val JOB_TYPE_YOUTUBE_SEARCH = "YOUTUBE_SEARCH"
         private const val JOB_TYPE_YOUTUBE_PLAYLIST_ITEM = "YOUTUBE_PLAYLIST_ITEM"
-        private const val PRIORITY_MANUAL = 100
+        private const val PRIORITY_MANUAL = 1_000
+        private const val PRIORITY_AUTO = 0
         private const val STATUS_QUEUED = "QUEUED"
         private const val STATUS_COPYING = "COPYING"
         private const val STATUS_EXTRACTING_METADATA = "EXTRACTING_METADATA"
+        private const val STATUS_COMPLETED = "COMPLETED"
+        private const val STATUS_DUPLICATE = "DUPLICATE"
         private const val STATUS_FAILED = "FAILED"
         private const val STATUS_NEEDS_ATTENTION = "NEEDS_ATTENTION"
         private const val HISTORY_SUCCESS = "SUCCESS"
@@ -1490,7 +1703,6 @@ class YoutubeImportRepository(
             STATUS_FAILED,
             STATUS_NEEDS_ATTENTION,
             ApiJobState.FAILED,
-            ApiJobState.CANCELLED,
             ApiJobState.EXPIRED,
             ApiJobState.UNKNOWN
         )
@@ -1502,7 +1714,15 @@ class YoutubeImportRepository(
             ApiJobState.POST_PROCESSING,
             ApiJobState.PROCESSING,
             ApiJobState.RUNNING,
-            ApiJobState.READY_FOR_TRANSFER
+            ApiJobState.READY_FOR_TRANSFER,
+            STATUS_COPYING,
+            STATUS_EXTRACTING_METADATA,
+            STATUS_NEEDS_ATTENTION
+        )
+        private val localTransferStatuses = setOf(
+            STATUS_COPYING,
+            STATUS_EXTRACTING_METADATA,
+            ApiJobState.TRANSFER_CONFIRMED
         )
     }
 }
@@ -1569,4 +1789,3 @@ private fun String.isLikelyYoutubeUrl(): Boolean =
     extractYoutubeVideoId() != null ||
         trim().lowercase(Locale.US).startsWith("http://") ||
         trim().lowercase(Locale.US).startsWith("https://")
-

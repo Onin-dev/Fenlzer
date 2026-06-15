@@ -56,7 +56,7 @@ import com.fenl.fenlzer.data.local.entity.TrackStatsSnapshotEntity
         ImportHistoryEntryEntity::class,
         ApiDiagnosticEntryEntity::class
     ],
-    version = 3,
+    version = 5,
     exportSchema = true
 )
 abstract class FenlzerDatabase : RoomDatabase() {
@@ -77,11 +77,11 @@ abstract class FenlzerDatabase : RoomDatabase() {
                 FenlzerDatabase::class.java,
                 DATABASE_NAME
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(*ALL_MIGRATIONS)
                 .build()
         }
 
-        private val MIGRATION_1_2 = object : Migration(1, 2) {
+        val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(connection: SQLiteConnection) {
                 connection.execSQL(
                     "ALTER TABLE queue_states ADD COLUMN playbackPositionMs INTEGER NOT NULL DEFAULT 0"
@@ -92,7 +92,7 @@ abstract class FenlzerDatabase : RoomDatabase() {
             }
         }
 
-        private val MIGRATION_2_3 = object : Migration(2, 3) {
+        val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(connection: SQLiteConnection) {
                 connection.execSQL(
                     """
@@ -126,5 +126,124 @@ abstract class FenlzerDatabase : RoomDatabase() {
                 )
             }
         }
+
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE tracks ADD COLUMN importReason TEXT")
+                connection.execSQL("ALTER TABLE tracks ADD COLUMN requestedDownloadFormat TEXT")
+
+                connection.execSQL("ALTER TABLE import_jobs ADD COLUMN sourceType TEXT")
+                connection.execSQL("ALTER TABLE import_jobs ADD COLUMN reason TEXT")
+                connection.execSQL("ALTER TABLE import_jobs ADD COLUMN priorityClass TEXT")
+                connection.execSQL("ALTER TABLE import_jobs ADD COLUMN pendingActionType TEXT")
+
+                connection.execSQL("ALTER TABLE import_history_entries ADD COLUMN sourceType TEXT")
+                connection.execSQL("ALTER TABLE import_history_entries ADD COLUMN jobType TEXT")
+                connection.execSQL("ALTER TABLE import_history_entries ADD COLUMN requestedFormat TEXT")
+                connection.execSQL("ALTER TABLE import_history_entries ADD COLUMN finalFormat TEXT")
+                connection.execSQL("ALTER TABLE import_history_entries ADD COLUMN pendingActionType TEXT")
+
+                connection.execSQL(
+                    """
+                    UPDATE import_jobs
+                    SET sourceType = CASE
+                        WHEN targetPlaylistId IS NOT NULL THEN 'DISCOVER_AUTO_PLAYLIST'
+                        WHEN targetFavourite = 1 THEN 'DISCOVER_AUTO_FAVOURITE'
+                        WHEN jobType = 'LOCAL_FILE' THEN 'LOCAL_FILE'
+                        WHEN jobType = 'YOUTUBE_PLAYLIST_ITEM' THEN 'YOUTUBE_PLAYLIST'
+                        ELSE 'LEGACY_YOUTUBE'
+                    END,
+                    reason = CASE
+                        WHEN targetPlaylistId IS NOT NULL THEN 'AUTO_PLAYLIST_ADD'
+                        WHEN targetFavourite = 1 THEN 'AUTO_FAVOURITE'
+                        WHEN jobType = 'LOCAL_FILE' THEN 'MANUAL_LOCAL'
+                        WHEN jobType = 'YOUTUBE_PLAYLIST_ITEM' THEN 'YOUTUBE_PLAYLIST'
+                        ELSE 'LEGACY_YOUTUBE'
+                    END,
+                    priorityClass = CASE
+                        WHEN targetPlaylistId IS NOT NULL OR targetFavourite = 1 THEN 'AUTO'
+                        ELSE 'MANUAL'
+                    END,
+                    pendingActionType = CASE
+                        WHEN targetPlaylistId IS NOT NULL THEN 'ADD_TO_PLAYLIST'
+                        WHEN targetFavourite = 1 THEN 'FAVOURITE'
+                        ELSE NULL
+                    END
+                    """.trimIndent()
+                )
+                connection.execSQL(
+                    """
+                    UPDATE import_history_entries
+                    SET sourceType = COALESCE(
+                            (SELECT sourceType FROM import_jobs
+                             WHERE import_jobs.importJobId = import_history_entries.importJobId),
+                            CASE WHEN youtubeVideoId IS NULL THEN 'LOCAL_FILE' ELSE 'LEGACY_YOUTUBE' END
+                        ),
+                        jobType = (SELECT jobType FROM import_jobs
+                                   WHERE import_jobs.importJobId = import_history_entries.importJobId),
+                        requestedFormat = (SELECT preferredFormat FROM import_jobs
+                                           WHERE import_jobs.importJobId = import_history_entries.importJobId),
+                        finalFormat = (SELECT actualFormat FROM import_jobs
+                                       WHERE import_jobs.importJobId = import_history_entries.importJobId),
+                        pendingActionType = (SELECT pendingActionType FROM import_jobs
+                                             WHERE import_jobs.importJobId = import_history_entries.importJobId),
+                        reason = COALESCE(
+                            (SELECT reason FROM import_jobs
+                             WHERE import_jobs.importJobId = import_history_entries.importJobId),
+                            reason
+                        )
+                    """.trimIndent()
+                )
+                connection.execSQL(
+                    """
+                    UPDATE tracks
+                    SET sourceType = COALESCE(
+                            (SELECT sourceType FROM import_history_entries
+                             WHERE import_history_entries.trackId = tracks.trackId
+                             ORDER BY createdAt DESC LIMIT 1),
+                            CASE WHEN sourceType = 'YOUTUBE' THEN 'LEGACY_YOUTUBE' ELSE sourceType END
+                        ),
+                        importReason = (SELECT reason FROM import_history_entries
+                                        WHERE import_history_entries.trackId = tracks.trackId
+                                        ORDER BY createdAt DESC LIMIT 1),
+                        requestedDownloadFormat = (SELECT requestedFormat FROM import_history_entries
+                                                   WHERE import_history_entries.trackId = tracks.trackId
+                                                   ORDER BY createdAt DESC LIMIT 1)
+                    """.trimIndent()
+                )
+            }
+        }
+
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
+                    "ALTER TABLE import_jobs ADD COLUMN attemptCount INTEGER NOT NULL DEFAULT 0"
+                )
+                connection.execSQL(
+                    "ALTER TABLE import_jobs ADD COLUMN maxAttempts INTEGER NOT NULL DEFAULT 3"
+                )
+                connection.execSQL(
+                    "ALTER TABLE import_jobs ADD COLUMN isVisibleInActiveImports INTEGER NOT NULL DEFAULT 0"
+                )
+                connection.execSQL(
+                    """
+                    UPDATE import_jobs
+                    SET isVisibleInActiveImports = 1
+                    WHERE status IN (
+                        'QUEUED', 'DOWNLOADING_METADATA', 'DOWNLOADING', 'POST_PROCESSING',
+                        'PROCESSING', 'RUNNING', 'READY_FOR_TRANSFER', 'COPYING',
+                        'EXTRACTING_METADATA', 'NEEDS_ATTENTION', 'FAILED'
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        val ALL_MIGRATIONS = arrayOf(
+            MIGRATION_1_2,
+            MIGRATION_2_3,
+            MIGRATION_3_4,
+            MIGRATION_4_5
+        )
     }
 }

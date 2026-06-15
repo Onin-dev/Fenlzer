@@ -1,23 +1,23 @@
 package com.fenl.fenlzer.importing.youtube
 
+import com.fenl.fenlzer.importing.ImportIntent
+import com.fenl.fenlzer.importing.ImportQueueCoordinator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 class YoutubeImportCoordinator(
     private val repository: YoutubeImportRepository,
+    private val importQueueCoordinator: ImportQueueCoordinator,
     private val scope: CoroutineScope
 ) {
-    private val importRunnerMutex = Mutex()
     private var recoveryJob: Job? = null
 
     fun observeActiveImports(): Flow<List<ActiveImportUiItem>> =
-        repository.observeActiveImports()
+        importQueueCoordinator.observeActiveImports()
 
     fun observeImportHistory(): Flow<List<ImportHistoryUiItem>> =
         repository.observeImportHistory()
@@ -34,9 +34,7 @@ class YoutubeImportCoordinator(
     fun startRecovery(): Job {
         recoveryJob?.takeIf { it.isActive }?.let { return it }
         return scope.launch {
-            importRunnerMutex.withLock {
-                repository.resumeRecoverableSearchImports()
-            }
+            importQueueCoordinator.recover()
         }.also { job ->
             recoveryJob = job
         }
@@ -44,12 +42,10 @@ class YoutubeImportCoordinator(
 
     fun importSearchResult(
         result: YoutubeSearchResultItem,
-        targetFavourite: Boolean = false
+        intent: ImportIntent = ImportIntent.youtubeSearch()
     ): Deferred<YoutubeImportItemResult> =
         scope.async {
-            importRunnerMutex.withLock {
-                repository.importSearchResult(result, targetFavourite = targetFavourite)
-            }
+            importQueueCoordinator.enqueueYoutube(result, intent)
         }
 
     fun importPlaylistItems(
@@ -58,30 +54,26 @@ class YoutubeImportCoordinator(
         wholePlaylist: Boolean
     ): Deferred<List<YoutubeImportItemResult>> =
         scope.async {
-            importRunnerMutex.withLock {
-                repository.importPlaylistItems(
-                    preview = preview,
-                    remoteItemIds = remoteItemIds,
-                    wholePlaylist = wholePlaylist
-                )
-            }
+            importQueueCoordinator.enqueueYoutubePlaylist(
+                preview = preview,
+                remoteItemIds = remoteItemIds,
+                wholePlaylist = wholePlaylist
+            )
         }
 
     fun retryImport(importJobId: String): Deferred<YoutubeImportItemResult?> =
         scope.async {
-            importRunnerMutex.withLock {
-                repository.retryImport(importJobId)
-            }
+            importQueueCoordinator.retry(importJobId)
         }
 
     fun cancelImport(importJobId: String): Deferred<Unit> =
         scope.async {
-            repository.cancelImport(importJobId)
+            importQueueCoordinator.cancel(importJobId)
         }
 
     fun moveImport(importJobId: String, offset: Int): Deferred<Unit> =
         scope.async {
-            repository.moveImport(importJobId, offset)
+            importQueueCoordinator.move(importJobId, offset)
         }
 
     fun clearImportHistory(): Deferred<Unit> =
@@ -91,8 +83,14 @@ class YoutubeImportCoordinator(
 
     fun retryHistoryItem(historyItem: ImportHistoryUiItem): Deferred<YoutubeImportItemResult?> =
         scope.async {
-            importRunnerMutex.withLock {
-                repository.retryHistoryItem(historyItem)
-            }
+            importQueueCoordinator.retry(historyItem.importJobId ?: return@async null)
         }
+
+    fun acknowledgeFinishedJobs(): Deferred<Unit> = scope.async {
+        importQueueCoordinator.acknowledgeFinishedJobs()
+    }
+
+    fun dismissFailedJob(importJobId: String): Deferred<Unit> = scope.async {
+        importQueueCoordinator.dismissFailedJob(importJobId)
+    }
 }

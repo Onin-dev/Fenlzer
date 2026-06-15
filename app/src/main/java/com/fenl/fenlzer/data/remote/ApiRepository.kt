@@ -20,8 +20,8 @@ class ApiRepository(
     private val dispatchers: FenlzerDispatchers,
     private val serviceFactory: (String, () -> String) -> FenlzerApiService = FenlzerApiFactory::create,
     private val nowMillis: () -> Long = System::currentTimeMillis
-) {
-    fun savedToken(): String = tokenStore.getToken().orEmpty()
+) : RemoteDiagnosticsSource {
+    override fun savedToken(): String = tokenStore.getToken().orEmpty()
 
     fun saveApiSettings(baseUrl: String, token: String) {
         settingsRepository.setApiBaseUrl(baseUrl.trim())
@@ -229,6 +229,14 @@ class ApiRepository(
                 idempotencyKey = idempotencyKey,
                 request = request
             )
+        }
+
+    override suspend fun recentDiagnostics(limit: Int, since: String?): DiagnosticsRecentData =
+        callConfiguredApi(
+            endpoint = "/v1/diagnostics/recent",
+            method = "GET"
+        ) { service ->
+            service.recentDiagnostics(limit = limit, since = since)
         }
 
     suspend fun getJobFile(

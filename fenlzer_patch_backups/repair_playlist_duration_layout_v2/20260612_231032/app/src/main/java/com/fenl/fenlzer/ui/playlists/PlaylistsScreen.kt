@@ -104,8 +104,7 @@ import java.util.Date
 import java.util.Locale
 import com.fenl.fenlzer.ui.components.DragStepHandle
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.ui.text.style.TextAlign
 
 @Composable
 fun PlaylistsScreen(
@@ -394,24 +393,18 @@ private fun RegularPlaylistDetailView(
     var searchQuery by rememberSaveable(playlist.playlistId) { mutableStateOf("") }
     var sort by rememberSaveable(playlist.playlistId) { mutableStateOf(PlaylistDetailSort.MANUAL) }
     var showAddSongsSheet by rememberSaveable { mutableStateOf(false) }
-    
- var reorderMode by rememberSaveable(playlist.playlistId) { mutableStateOf(false) }
- var playlistSelectedTrackIds by rememberSaveable(playlist.playlistId) { mutableStateOf(setOf<String>()) }
- val playlistSelectionMode = playlistSelectedTrackIds.isNotEmpty()
- fun togglePlaylistTrackSelection(trackId: String) {
-     playlistSelectedTrackIds = if (trackId in playlistSelectedTrackIds) {
-         playlistSelectedTrackIds - trackId
-     } else {
-         playlistSelectedTrackIds + trackId
-     }
- }
-var showRenameDialog by rememberSaveable { mutableStateOf(false) }
+    var reorderMode by rememberSaveable(playlist.playlistId) { mutableStateOf(false) }
+    var selectedTrackIds by remember(playlist.playlistId) { mutableStateOf(emptySet<String>()) }
+    val selectionMode = selectedTrackIds.isNotEmpty()
+
+    var showRenameDialog by rememberSaveable { mutableStateOf(false) }
     var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
     val visibleTracks = remember(playlist.tracks, searchQuery, sort) {
         playlist.tracks.visibleTracks(searchQuery, sort)
     }
     val canReorder = searchQuery.isBlank() && sort == PlaylistDetailSort.MANUAL
+    val reorderHandlesVisible = canReorder && reorderMode && !selectionMode
     val isLandscape =
         LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
@@ -500,22 +493,11 @@ var showRenameDialog by rememberSaveable { mutableStateOf(false) }
                 )
             },
             secondary = {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedButton(
-                    onClick = { reorderMode = !reorderMode },
-                    enabled = canReorder
-                ) {
-                    Text(text = if (reorderMode) "Done" else "Reorder")
-                }
                 OutlinedButton(onClick = { showAddSongsSheet = true }) {
                     Icon(imageVector = Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null)
                     Text(text = "Add", modifier = Modifier.padding(start = 8.dp))
                 }
             }
-        }
         )
         if (!canReorder) {
             Text(
@@ -536,42 +518,42 @@ var showRenameDialog by rememberSaveable { mutableStateOf(false) }
                 sort = sort,
                 onSortChanged = { sort = it }
             )
-            if (playlistSelectionMode) {
 
-                PlaylistSelectionActionBar(
-
-                    selectedCount = playlistSelectedTrackIds.size,
-
-                    onAddToQueue = {
-
-                        playlistSelectedTrackIds.forEach(onAddToQueue)
-
-                        playlistSelectedTrackIds = emptySet()
-
-                    },
-
-                    onClearSelection = { playlistSelectedTrackIds = emptySet() }
-
-                )
-
-            }
+        PlaylistBulkActionBar(
+            selectedCount = selectedTrackIds.size,
+            reorderMode = reorderMode,
+            canReorder = reorderHandlesVisible,
+            onToggleReorder = {
+                reorderMode = !reorderMode
+                selectedTrackIds = emptySet()
+            },
+            onAddToQueue = {
+                visibleTracks
+                    .filter { it.trackId in selectedTrackIds }
+                    .forEach { onAddToQueue(it.trackId) }
+                selectedTrackIds = emptySet()
+            },
+            onClearSelection = { selectedTrackIds = emptySet() }
+        )
 
             PlaylistTrackList(
                 tracks = visibleTracks,
-        selectedTrackIds = playlistSelectedTrackIds,
-        selectionMode = playlistSelectionMode,
-        onToggleSelection = ::togglePlaylistTrackSelection,
-        onEnterSelection = { trackId ->
-            playlistSelectedTrackIds = setOf(trackId)
-            reorderMode = false
-        },
                 emptyText = if (playlist.tracks.isEmpty()) {
                     "No songs in this playlist"
                 } else {
                     "No matching songs"
                 },
-                canReorder = canReorder && reorderMode,
+                canReorder = canReorder,
                 sourceTracks = playlist.tracks,
+            selectedTrackIds = selectedTrackIds,
+            selectionMode = selectionMode,
+            onToggleSelection = { trackId ->
+                selectedTrackIds = selectedTrackIds.toggle(trackId)
+            },
+            onEnterSelection = { trackId ->
+                selectedTrackIds = setOf(trackId)
+                reorderMode = false
+            },
                 showRemove = true,
                 onTrackClick = { track ->
                     playRegularPlaylist(
@@ -656,6 +638,9 @@ private fun SmartPlaylistDetailView(
     var searchQuery by rememberSaveable(playlist.smartPlaylistId) { mutableStateOf("") }
     var sort by rememberSaveable(playlist.smartPlaylistId) { mutableStateOf(PlaylistDetailSort.MANUAL) }
     var showSaveDialog by rememberSaveable { mutableStateOf(false) }
+    var selectedTrackIds by remember(playlist.smartPlaylistId) { mutableStateOf(emptySet<String>()) }
+    val selectionMode = selectedTrackIds.isNotEmpty()
+
     val visibleTracks = remember(playlist.tracks, searchQuery, sort) {
         playlist.tracks.visibleTracks(searchQuery, sort)
     }
@@ -717,10 +702,6 @@ private fun SmartPlaylistDetailView(
                 )
             },
             secondary = {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
                 OutlinedButton(
                     onClick = { showSaveDialog = true },
                     enabled = visibleTracks.isNotEmpty()
@@ -729,7 +710,6 @@ private fun SmartPlaylistDetailView(
                     Text(text = "Save", modifier = Modifier.padding(start = 8.dp))
                 }
             }
-        }
         )
     }
     val tracks: @Composable (Modifier) -> Unit = { tracksModifier ->
@@ -743,6 +723,21 @@ private fun SmartPlaylistDetailView(
                 sort = sort,
                 onSortChanged = { sort = it }
             )
+
+        PlaylistBulkActionBar(
+            selectedCount = selectedTrackIds.size,
+            reorderMode = false,
+            canReorder = false,
+            onToggleReorder = {},
+            onAddToQueue = {
+                visibleTracks
+                    .filter { it.trackId in selectedTrackIds }
+                    .forEach { onAddToQueue(it.trackId) }
+                selectedTrackIds = emptySet()
+            },
+            onClearSelection = { selectedTrackIds = emptySet() }
+        )
+
             PlaylistTrackList(
                 tracks = visibleTracks,
                 emptyText = if (playlist.tracks.isEmpty()) {
@@ -752,6 +747,14 @@ private fun SmartPlaylistDetailView(
                 },
                 canReorder = false,
                 sourceTracks = playlist.tracks,
+            selectedTrackIds = selectedTrackIds,
+            selectionMode = selectionMode,
+            onToggleSelection = { trackId ->
+                selectedTrackIds = selectedTrackIds.toggle(trackId)
+            },
+            onEnterSelection = { trackId ->
+                selectedTrackIds = setOf(trackId)
+            },
                 showRemove = false,
                 onTrackClick = { track ->
                     playSmartPlaylist(
@@ -1075,13 +1078,6 @@ private fun PlaylistSearchAndSortRow(
             singleLine = true,
             placeholder = { Text(text = "Search songs") },
             leadingIcon = { Icon(imageVector = Icons.Rounded.Search, contentDescription = null) },
-        trailingIcon = {
-            if (searchQuery.isNotBlank()) {
-                IconButton(onClick = { onSearchChanged("") }) {
-                    Icon(imageVector = Icons.Rounded.Close, contentDescription = "Clear playlist search")
-                }
-            }
-        },
             modifier = Modifier.weight(1f)
         )
         Box {
@@ -1114,45 +1110,51 @@ private fun PlaylistSearchAndSortRow(
 
 
 @Composable
-private fun PlaylistSelectionActionBar(
+private fun PlaylistBulkActionBar(
     selectedCount: Int,
+    reorderMode: Boolean,
+    canReorder: Boolean,
+    onToggleReorder: () -> Unit,
     onAddToQueue: () -> Unit,
     onClearSelection: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(MaterialTheme.shapes.medium)
-            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.50f))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = "$selectedCount selected",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onPrimaryContainer,
-            modifier = Modifier.weight(1f)
-        )
-        OutlinedButton(onClick = onAddToQueue) {
-            Text(text = "Add to queue")
+        OutlinedButton(
+            onClick = onToggleReorder,
+            enabled = canReorder
+        ) {
+            Text(text = if (reorderMode) "Done reordering" else "Reorder")
         }
-        TextButton(onClick = onClearSelection) {
-            Text(text = "Clear")
+
+        if (selectedCount > 0) {
+            FilledTonalButton(onClick = onAddToQueue) {
+                Icon(imageVector = Icons.Rounded.Queue, contentDescription = null)
+                Text(text = "Add $selectedCount to queue", modifier = Modifier.padding(start = 8.dp))
+            }
+            TextButton(onClick = onClearSelection) {
+                Text(text = "Clear")
+            }
         }
     }
 }
 
+
 @Composable
 private fun PlaylistTrackList(
     tracks: List<PlaylistTrackItem>,
+    emptyText: String,
+    canReorder: Boolean,
+    sourceTracks: List<PlaylistTrackItem>,
     selectedTrackIds: Set<String> = emptySet(),
     selectionMode: Boolean = false,
     onToggleSelection: (String) -> Unit = {},
     onEnterSelection: (String) -> Unit = {},
-    emptyText: String,
-    canReorder: Boolean,
-    sourceTracks: List<PlaylistTrackItem>,
     showRemove: Boolean,
     onTrackClick: (PlaylistTrackItem) -> Unit,
     onMove: (String, Int) -> Unit,
@@ -1164,100 +1166,68 @@ private fun PlaylistTrackList(
     modifier: Modifier = Modifier
 ) {
     if (tracks.isEmpty()) {
-        Surface(
-            tonalElevation = 1.dp,
-            shape = RoundedCornerShape(8.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-            modifier = modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = emptyText,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "Change the search or sort options, or add songs to this playlist.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
+        EmptyListMessage(text = emptyText, modifier = modifier)
         return
     }
 
-    val sourceIndexByTrackId = remember(sourceTracks) {
-        sourceTracks.mapIndexed { index, track -> track.trackId to index }.toMap()
-    }
-
     LazyColumn(
-        modifier = modifier.testTag("playlistTrackList"),
-        contentPadding = PaddingValues(bottom = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        items(
-            items = tracks,
-            key = { it.trackId }
-        ) { track ->
-            val sourceIndex = sourceIndexByTrackId[track.trackId] ?: -1
-            val canMoveUp = canReorder && sourceIndex > 0
-            val canMoveDown = canReorder && sourceIndex != -1 && sourceIndex < sourceTracks.lastIndex
+        items(tracks, key = { it.trackId }) { track ->
+            val sourceIndex = sourceTracks.indexOfFirst { it.trackId == track.trackId }
+            val isSelected = track.trackId in selectedTrackIds
+
             Box(
-
                 modifier = Modifier
-
                     .fillMaxWidth()
-
-                    .clip(MaterialTheme.shapes.medium)
-
+                    .clip(RoundedCornerShape(8.dp))
                     .background(
-
-                        if (track.trackId in selectedTrackIds) {
-
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
-
+                        if (isSelected) {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.70f)
                         } else {
-
                             MaterialTheme.colorScheme.surface
-
                         }
-
                     )
-
                     .combinedClickable(
-
                         onClick = {
-
-                            if (selectionMode) onToggleSelection(track.trackId)
-
+                            if (selectionMode) {
+                                onToggleSelection(track.trackId)
+                            } else {
+                                onTrackClick(track)
+                            }
                         },
-
                         onLongClick = { onEnterSelection(track.trackId) }
-
                     )
-
             ) {
-
-            PlaylistTrackRow(
-                track = track,
-                canReorder = canReorder && reorderMode,
-                canMoveUp = canMoveUp,
-                canMoveDown = canMoveDown,
-                showRemove = showRemove,
-                onClick = { onTrackClick(track) },
-                onMove = onMove,
-                onRemove = onRemove,
-                onPlayNext = onPlayNext,
-                onAddToQueue = onAddToQueue,
-                onToggleFavourite = onToggleFavourite,
-                onAddToPlaylist = onAddToPlaylist
-            )
+                PlaylistTrackRow(
+                    track = track,
+                    showRemove = showRemove,
+                    canReorder = canReorder,
+                    canMoveUp = canReorder && sourceIndex > 0,
+                    canMoveDown = canReorder && sourceIndex >= 0 && sourceIndex < sourceTracks.lastIndex,
+                    onMoveUp = { onMove(track.trackId, -1) },
+                    onMoveDown = { onMove(track.trackId, 1) },
+                    onClick = {
+                        if (selectionMode) {
+                            onToggleSelection(track.trackId)
+                        } else {
+                            onTrackClick(track)
+                        }
+                    },
+                    onRemove = { onRemove(track.trackId) },
+                    onPlayNext = { onPlayNext(track.trackId) },
+                    onAddToQueue = { onAddToQueue(track.trackId) },
+                    onToggleFavourite = { onToggleFavourite(track.trackId, !track.isFavourite) },
+                    onAddToPlaylist = { onAddToPlaylist(track.trackId, "") }
+                )
+            }
         }
     }
 }
+
+
 
 @Composable
 private fun PlaylistTrackRow(
@@ -1886,3 +1856,59 @@ private fun Long.formatDuration(): String {
         String.format(Locale.US, "%d:%02d", minutes, seconds)
     }
 }
+
+
+private fun Set<String>.toggle(value: String): Set<String> =
+    if (value in this) {
+        this - value
+    } else {
+        this + value
+    }
+
+
+@Composable
+private fun EmptyListMessage(
+    text: String,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 28.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun PlaylistTrackMetadataLine(track: PlaylistTrackItem) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = track.artist.ifBlank { "Unknown Artist" },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = track.durationMs.formatDuration(),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Clip,
+            textAlign = TextAlign.End
+        )
+    }
+}
+

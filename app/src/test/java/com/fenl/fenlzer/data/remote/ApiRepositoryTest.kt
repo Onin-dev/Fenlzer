@@ -138,6 +138,62 @@ class ApiRepositoryTest {
     }
 
     @Test
+    fun recentDiagnosticsUsesContractEndpointAndParsesResponse() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "success": true,
+                      "requestId": "req_recent",
+                      "data": {
+                        "entries": [
+                          {
+                            "requestId": "req_server_1",
+                            "endpoint": "/v1/health",
+                            "method": "GET",
+                            "statusCode": 200,
+                            "durationMs": 15,
+                            "success": true,
+                            "createdAt": "2026-06-15T10:15:30Z"
+                          }
+                        ]
+                      }
+                    }
+                    """.trimIndent()
+                )
+        )
+        val repository = repository(InMemoryApiDiagnosticRecorder())
+        repository.saveApiSettings(server.url("/").toString(), "secret-token")
+
+        val result = repository.recentDiagnostics(limit = 25)
+
+        assertEquals("/v1/diagnostics/recent?limit=25", server.takeRequest().path)
+        assertEquals("req_server_1", result.entries.single().requestId)
+    }
+
+    @Test
+    fun malformedRecentDiagnosticsRecordsSanitizedFailure() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody("{ malformed secret-token")
+        )
+        val diagnostics = InMemoryApiDiagnosticRecorder()
+        val repository = repository(diagnostics)
+        repository.saveApiSettings(server.url("/").toString(), "secret-token")
+
+        val failure = runCatching { repository.recentDiagnostics() }
+
+        assertTrue(failure.isFailure)
+        assertEquals("UNKNOWN_ERROR", diagnostics.entries.single().errorCode)
+        assertFalse(diagnostics.entries.single().sanitizedMessage.orEmpty().contains("secret-token"))
+    }
+
+    @Test
     fun downloadJobFlowUsesContractEndpointsAndConfirmsFile() = runTest {
         server.enqueue(
             MockResponse()

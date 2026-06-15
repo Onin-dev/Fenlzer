@@ -111,6 +111,34 @@ class LocalImportRepositoryTest {
         assertEquals("fenlzer-import-repository-test.mp3", importedTrack?.originalFilename)
     }
 
+    @Test
+    fun cancellingPreparedImportRemovesPartialFileAndPersistsTerminalState() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val repository = LocalImportRepository(
+            context = ApplicationProvider.getApplicationContext(),
+            trackDao = database.trackDao(),
+            importDao = database.importDao(),
+            storage = storage,
+            metadataExtractor = FakeMetadataExtractor(),
+            dispatchers = FenlzerDispatchers(
+                main = dispatcher,
+                io = dispatcher,
+                default = dispatcher
+            ),
+            now = { 100L },
+            idFactory = { "prepared-local-job" }
+        )
+        val job = repository.prepareImportJobs(listOf(Uri.fromFile(sourceFile))).single()
+        val partial = File(storage.tempImportDir, "local-import-${job.importJobId}-partial.mp3")
+        partial.writeText("partial")
+
+        repository.cancelImport(job.importJobId)
+
+        assertEquals("CANCELLED", database.importDao().getJob(job.importJobId)?.status)
+        assertTrue(!partial.exists())
+        assertEquals("CANCELLED", database.importDao().getImportHistory().single().result)
+    }
+
     private class FakeMetadataExtractor(
         private val title: String = "Repository Test Song"
     ) : LocalAudioMetadataExtractor {

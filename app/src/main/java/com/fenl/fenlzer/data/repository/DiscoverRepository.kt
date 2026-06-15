@@ -21,6 +21,7 @@ import com.fenl.fenlzer.data.remote.DiscoverRefreshRequest
 import com.fenl.fenlzer.data.remote.FenlzerApiFactory
 import com.fenl.fenlzer.importing.youtube.YoutubeImportCoordinator
 import com.fenl.fenlzer.importing.youtube.YoutubeImportItemResult
+import com.fenl.fenlzer.importing.ImportIntent
 import com.fenl.fenlzer.importing.youtube.YoutubeSearchResultItem
 import com.fenl.fenlzer.playback.RemoteStreamResolver
 import com.fenl.fenlzer.playback.RemoteStreamResolver.Companion.STREAM_REMOTE_ONLY
@@ -137,7 +138,11 @@ class DiscoverRepository(
                 ?: throw IllegalArgumentException("Remote item no longer exists.")
             youtubeImportCoordinator.importSearchResult(
                 result = remoteItem.toYoutubeSearchResult(),
-                targetFavourite = favourite
+                intent = if (favourite) {
+                    ImportIntent.discoverAutoFavourite()
+                } else {
+                    ImportIntent.discoverManual()
+                }
             ).await()
         }
 

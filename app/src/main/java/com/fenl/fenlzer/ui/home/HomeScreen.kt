@@ -221,14 +221,14 @@ fun HomeScreen(
                     selectedTrackIds = emptySet()
                 },
                 onAddToQueue = {
-            val selectedTracksSnapshot = visibleTracks.filter { track ->
-                track.trackId in selectedTrackIds
-            }
-            selectedTracksSnapshot.forEach { track ->
-                onAddToQueue(track)
-            }
-            selectedTrackIds = emptySet()
-        },
+                    val selectedTracksSnapshot = visibleTracks.filter { track ->
+                        track.trackId in selectedTrackIds
+                    }
+                    selectedTracksSnapshot.forEach { track ->
+                        onAddToQueue(track)
+                    }
+                    selectedTrackIds = emptySet()
+                },
                 onDelete = {
                     val selected = tracks.filter { it.trackId in selectedTrackIds }
                     onDeleteTracks(selected)
@@ -1121,6 +1121,8 @@ private fun TrackRow(
     onOpenSongDetails: () -> Unit,
     onEditMetadata: () -> Unit
 ) {
+    var actionMenuExpanded by remember { mutableStateOf(false) }
+
     var menuExpanded by remember { mutableStateOf(false) }
     val rowBackground = if (selected) {
         MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
@@ -1150,6 +1152,21 @@ private fun TrackRow(
             TrackArtwork(track = track)
         },
         
+        trailingContent = {
+            if (!selectionMode) {
+                HomeTrackActionsMenu(
+                    expanded = actionMenuExpanded,
+                    onExpandedChange = { actionMenuExpanded = it },
+                    showDeleteAction = showDeleteAction,
+                    onPlayNext = onPlayNext,
+                    onAddToQueue = onAddToQueue,
+                    onAddToPlaylist = onAddToPlaylist,
+                    onOpenSongDetails = onOpenSongDetails,
+                    onEditMetadata = onEditMetadata,
+                    onDelete = onDelete
+                )
+            }
+        },
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
@@ -1523,3 +1540,86 @@ private fun Long.formatDuration(): String {
         String.format(Locale.US, "%d:%02d", minutes, seconds)
     }
 }
+
+@Composable
+private fun HomeTrackActionsMenu(
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    showDeleteAction: Boolean,
+    onPlayNext: () -> Unit,
+    onAddToQueue: () -> Unit,
+    onAddToPlaylist: () -> Unit,
+    onOpenSongDetails: () -> Unit,
+    onEditMetadata: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Box {
+        IconButton(onClick = { onExpandedChange(true) }) {
+            Icon(imageVector = Icons.Rounded.MoreVert, contentDescription = "Song actions")
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { onExpandedChange(false) }
+        ) {
+            DropdownMenuItem(
+                text = { Text(text = "Play Next") },
+                onClick = {
+                    onExpandedChange(false)
+                    onPlayNext()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text(text = "Add to Queue") },
+                onClick = {
+                    onExpandedChange(false)
+                    onAddToQueue()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text(text = "Add to Playlist") },
+                onClick = {
+                    onExpandedChange(false)
+                    onAddToPlaylist()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text(text = "Song Details") },
+                onClick = {
+                    onExpandedChange(false)
+                    onOpenSongDetails()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text(text = "Edit Tags") },
+                onClick = {
+                    onExpandedChange(false)
+                    onEditMetadata()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text(text = "Change Artist") },
+                onClick = {
+                    onExpandedChange(false)
+                    onEditMetadata()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text(text = "Change Thumbnail") },
+                onClick = {
+                    onExpandedChange(false)
+                    onEditMetadata()
+                }
+            )
+            if (showDeleteAction) {
+                DropdownMenuItem(
+                    text = { Text(text = "Delete from Fenlzer") },
+                    onClick = {
+                        onExpandedChange(false)
+                        onDelete()
+                    }
+                )
+            }
+        }
+    }
+}
+

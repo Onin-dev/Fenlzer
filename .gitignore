@@ -58,3 +58,7 @@ Thumbs.db
 
 # Makefile
 Makefile
+
+# Visual Studio Code
+.agents/
+.codex/

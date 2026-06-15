@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CardDefaults
@@ -25,6 +26,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -41,7 +43,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.fenl.fenlzer.data.local.entity.ApiDiagnosticEntryEntity
+import com.fenl.fenlzer.data.repository.ApiDiagnosticItem
+import com.fenl.fenlzer.data.repository.ApiDiagnosticSource
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -58,14 +61,19 @@ private enum class DiagnosticFilter(val label: String) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ApiDiagnosticsScreen(
-    entries: List<ApiDiagnosticEntryEntity>,
+    localEntries: List<ApiDiagnosticItem>,
+    serverEntries: List<ApiDiagnosticItem>,
+    serverLoading: Boolean,
+    serverError: String?,
     onBack: () -> Unit,
     onClearDiagnostics: () -> Unit,
+    onRefreshServer: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var filter by rememberSaveable { mutableStateOf(DiagnosticFilter.ALL) }
     var confirmClear by rememberSaveable { mutableStateOf(false) }
 
+    val entries = (localEntries + serverEntries).sortedByDescending { it.startedAt }
     val filteredEntries = when (filter) {
         DiagnosticFilter.ALL -> entries
         DiagnosticFilter.FAILED -> entries.filterNot { it.success }
@@ -114,8 +122,24 @@ fun ApiDiagnosticsScreen(
                 },
                 actions = {
                     IconButton(
+                        onClick = onRefreshServer,
+                        enabled = !serverLoading
+                    ) {
+                        if (serverLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.padding(10.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Filled.Refresh,
+                                contentDescription = "Refresh server diagnostics"
+                            )
+                        }
+                    }
+                    IconButton(
                         onClick = { confirmClear = true },
-                        enabled = entries.isNotEmpty()
+                        enabled = localEntries.isNotEmpty()
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Delete,
@@ -134,6 +158,8 @@ fun ApiDiagnosticsScreen(
         ) {
             DiagnosticsSummary(
                 totalCount = entries.size,
+                localCount = localEntries.size,
+                serverCount = serverEntries.size,
                 failedCount = entries.count { !it.success },
                 successCount = entries.count { it.success },
                 filter = filter,
@@ -142,11 +168,25 @@ fun ApiDiagnosticsScreen(
 
             HorizontalDivider()
 
+            serverError?.let { message ->
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                        .testTag("serverDiagnosticsError")
+                )
+            }
+
             if (filteredEntries.isEmpty()) {
                 EmptyDiagnosticsState(filter = filter)
             } else {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("diagnosticsList"),
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
@@ -165,6 +205,8 @@ fun ApiDiagnosticsScreen(
 @Composable
 private fun DiagnosticsSummary(
     totalCount: Int,
+    localCount: Int,
+    serverCount: Int,
     failedCount: Int,
     successCount: Int,
     filter: DiagnosticFilter,
@@ -177,8 +219,13 @@ private fun DiagnosticsSummary(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(
-            text = "$totalCount local diagnostic entries",
+            text = "$totalCount diagnostic entries",
             style = MaterialTheme.typography.titleMedium
+        )
+        Text(
+            text = "$localCount local · $serverCount server",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(
             text = "$failedCount failed · $successCount successful",
@@ -231,7 +278,7 @@ private fun EmptyDiagnosticsState(filter: DiagnosticFilter) {
 }
 
 @Composable
-private fun DiagnosticEntryCard(entry: ApiDiagnosticEntryEntity) {
+private fun DiagnosticEntryCard(entry: ApiDiagnosticItem) {
     val statusColor = if (entry.success) {
         MaterialTheme.colorScheme.primary
     } else {
@@ -278,6 +325,15 @@ private fun DiagnosticEntryCard(entry: ApiDiagnosticEntryEntity) {
                     }
                 )
             }
+
+            AssistChip(
+                onClick = {},
+                label = {
+                    Text(
+                        text = if (entry.source == ApiDiagnosticSource.LOCAL) "Local" else "Server"
+                    )
+                }
+            )
 
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),

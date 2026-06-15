@@ -61,6 +61,8 @@ class MetadataRepository(
                 playlistNames = playlistNames,
                 source = SongSourceInfo(
                     sourceType = track.sourceType,
+                    importReason = track.importReason,
+                    requestedDownloadFormat = track.requestedDownloadFormat,
                     originalFilename = track.originalFilename,
                     youtubeVideoId = track.youtubeVideoId,
                     sourceUrl = track.sourceUrl
@@ -620,6 +622,8 @@ data class SongStats(
 
 data class SongSourceInfo(
     val sourceType: String,
+    val importReason: String?,
+    val requestedDownloadFormat: String?,
     val originalFilename: String?,
     val youtubeVideoId: String?,
     val sourceUrl: String?

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
@@ -22,6 +23,7 @@ import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -34,6 +36,7 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -61,6 +64,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.fenl.fenlzer.AppGraph
 import com.fenl.fenlzer.data.repository.AlbumBulkEditDraft
+import com.fenl.fenlzer.data.repository.ApiDiagnosticItem
 import com.fenl.fenlzer.data.repository.DiscoverUiState
 import com.fenl.fenlzer.data.repository.LibraryTrack
 import com.fenl.fenlzer.data.repository.PlaylistMembershipTarget
@@ -89,6 +93,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun FenlzerApp(
     appGraph: AppGraph,
+    activeImportsRequest: Int = 0,
     modifier: Modifier = Modifier
 ) {
     val navController = rememberNavController()
@@ -125,6 +130,7 @@ fun FenlzerApp(
                 onSettingsRequested = { navController.navigate(FenlzerRoute.Settings.route) },
                 onStatsRequested = { navController.navigate(FenlzerRoute.Statistics.route) },
                 onTabSelected = ::navigateToMainTab,
+                externalActiveImportsRequest = activeImportsRequest,
                 modifier = Modifier.weight(1f)
             )
         }
@@ -139,6 +145,7 @@ fun FenlzerApp(
             onSettingsRequested = { navController.navigate(FenlzerRoute.Settings.route) },
             onStatsRequested = { navController.navigate(FenlzerRoute.Statistics.route) },
             onTabSelected = ::navigateToMainTab,
+            externalActiveImportsRequest = activeImportsRequest,
             modifier = modifier
         )
     }
@@ -155,6 +162,7 @@ private fun FenlzerScaffold(
     onSettingsRequested: () -> Unit,
     onStatsRequested: () -> Unit,
     onTabSelected: (FenlzerRoute) -> Unit,
+    externalActiveImportsRequest: Int,
     modifier: Modifier = Modifier
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -177,6 +185,26 @@ private fun FenlzerScaffold(
         ?.uiState
         ?.collectAsStateWithLifecycle()
         ?: remember { mutableStateOf(PlaybackUiState()) }
+    val activeImportsFlow = remember(appGraph.youtubeImportCoordinator) {
+        appGraph.youtubeImportCoordinator?.observeActiveImports()
+    }
+    val activeImports by activeImportsFlow
+        ?.collectAsStateWithLifecycle(initialValue = emptyList())
+        ?: remember { mutableStateOf(emptyList()) }
+    val runningImportCount = activeImports.count { item -> !item.status.isTerminalImportStatus() }
+    var activeImportsRequestId by rememberSaveable { mutableStateOf(0) }
+
+    LaunchedEffect(externalActiveImportsRequest) {
+        if (externalActiveImportsRequest > 0) {
+            activeImportsRequestId += 1
+            onImportRequested()
+        }
+    }
+
+    fun openActiveImports() {
+        activeImportsRequestId += 1
+        onImportRequested()
+    }
     var showQueuePanel by remember { mutableStateOf(false) }
     var addToPlaylistTarget by remember { mutableStateOf<PendingAddToPlaylist?>(null) }
     var detailsTrackId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -397,6 +425,12 @@ private fun FenlzerScaffold(
         bottomBar = {
             if (!hidesAppChrome && !isKeyboardVisible) {
                 Column {
+                if (currentRoute != FenlzerRoute.Import.route && runningImportCount > 0) {
+                    RunningImportsBanner(
+                        count = runningImportCount,
+                        onClick = ::openActiveImports
+                    )
+                }
                 MiniPlayer(
                     playbackState = playbackState,
                     privateModeEnabled = privateModeEnabled,
@@ -473,7 +507,8 @@ private fun FenlzerScaffold(
                 onChangeAlbumThumbnail = { albumKey, overwriteExistingCustom ->
                     albumThumbnailRequest = PendingAlbumThumbnail(albumKey, overwriteExistingCustom)
                     thumbnailLauncher.launch("image/*")
-                }
+                },
+                activeImportsRequestId = activeImportsRequestId
             )
 
             if (showQueuePanel) {
@@ -534,7 +569,8 @@ private fun FenlzerNavHost(
     onAddToPlaylist: (String, String) -> Unit,
     onOpenSongDetails: (String) -> Unit,
     onEditMetadata: (String) -> Unit,
-    onChangeAlbumThumbnail: (String, Boolean) -> Unit
+    onChangeAlbumThumbnail: (String, Boolean) -> Unit,
+    activeImportsRequestId: Int
 ) {
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -545,7 +581,7 @@ private fun FenlzerNavHost(
         }.getOrDefault("unknown")
     }
     val localImportViewModel: LocalImportViewModel = viewModel(
-        factory = LocalImportViewModel.factory(appGraph.localImportRepository)
+        factory = LocalImportViewModel.factory(appGraph.importQueueCoordinator)
     )
     val localImportState by localImportViewModel.uiState.collectAsStateWithLifecycle()
     val youtubeImportViewModel: YoutubeImportViewModel = viewModel(
@@ -583,6 +619,27 @@ private fun FenlzerNavHost(
     val apiDiagnostics by apiDiagnosticsFlow
         ?.collectAsStateWithLifecycle(initialValue = emptyList())
         ?: remember { mutableStateOf(emptyList()) }
+    val localDiagnosticItemsFlow = remember(appGraph.apiDiagnosticsRepository) {
+        appGraph.apiDiagnosticsRepository?.observeLocal(limit = 500)
+    }
+    val localDiagnosticItems by localDiagnosticItemsFlow
+        ?.collectAsStateWithLifecycle(initialValue = emptyList())
+        ?: remember { mutableStateOf(emptyList()) }
+    var serverDiagnosticItems by remember { mutableStateOf(emptyList<ApiDiagnosticItem>()) }
+    var serverDiagnosticsLoading by remember { mutableStateOf(false) }
+    var serverDiagnosticsError by remember { mutableStateOf<String?>(null) }
+
+    fun refreshServerDiagnostics() {
+        val repository = appGraph.apiDiagnosticsRepository ?: return
+        coroutineScope.launch {
+            serverDiagnosticsLoading = true
+            val result = repository.loadServer()
+            serverDiagnosticItems = result.entries
+            serverDiagnosticsError = result.errorMessage
+            serverDiagnosticsLoading = false
+        }
+    }
+
     val customThumbnailLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
         onResult = { uri ->
@@ -1041,6 +1098,9 @@ private fun FenlzerNavHost(
                 onCancelYoutubeImport = youtubeImportViewModel::cancelImport,
                 onRetryYoutubeImport = youtubeImportViewModel::retryImport,
                 onMoveYoutubeImport = youtubeImportViewModel::moveImport,
+                onDismissYoutubeImport = youtubeImportViewModel::dismissFailedImport,
+                onEnterActiveImports = youtubeImportViewModel::enterActiveImports,
+                onLeaveActiveImports = youtubeImportViewModel::leaveActiveImports,
                 onHistoryFilterChanged = youtubeImportViewModel::setHistoryFilter,
                 onClearYoutubeHistory = youtubeImportViewModel::clearHistory,
                 onRetryYoutubeHistoryItem = youtubeImportViewModel::retryHistoryItem,
@@ -1056,7 +1116,8 @@ private fun FenlzerNavHost(
                 },
                 onOpenSongDetails = onOpenSongDetails,
                 onClearResult = localImportViewModel::clearResult,
-                onClearYoutubeResult = youtubeImportViewModel::clearLastImportResult
+                onClearYoutubeResult = youtubeImportViewModel::clearLastImportResult,
+                activeImportsRequestId = activeImportsRequestId
             )
         }
         composable(FenlzerRoute.Queue.route) {
@@ -1096,16 +1157,23 @@ private fun FenlzerNavHost(
         }
 
         composable(FenlzerRoute.Diagnostics.route) {
+            LaunchedEffect(Unit) {
+                refreshServerDiagnostics()
+            }
             ApiDiagnosticsScreen(
-                entries = apiDiagnostics,
+                localEntries = localDiagnosticItems,
+                serverEntries = serverDiagnosticItems,
+                serverLoading = serverDiagnosticsLoading,
+                serverError = serverDiagnosticsError,
                 onBack = { navController.popBackStack() },
                 onClearDiagnostics = {
-                    appGraph.database?.let { database ->
+                    appGraph.apiDiagnosticsRepository?.let { repository ->
                         coroutineScope.launch {
-                            database.apiDiagnosticDao().clearAll()
+                            repository.clearLocal()
                         }
                     }
-                }
+                },
+                onRefreshServer = ::refreshServerDiagnostics
             )
         }
 
@@ -1260,6 +1328,42 @@ private fun FenlzerNavHost(
         }
     }
 }
+
+@Composable
+private fun RunningImportsBanner(
+    count: Int,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        color = androidx.compose.material3.MaterialTheme.colorScheme.tertiaryContainer,
+        contentColor = androidx.compose.material3.MaterialTheme.colorScheme.onTertiaryContainer,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("runningImportsBanner")
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(imageVector = Icons.Rounded.Sync, contentDescription = null)
+            Text(
+                text = if (count == 1) "1 import running" else "$count imports running",
+                modifier = Modifier.weight(1f)
+            )
+            Text(text = "View")
+        }
+    }
+}
+
+private fun String.isTerminalImportStatus(): Boolean = this in setOf(
+    "COMPLETED",
+    "TRANSFER_CONFIRMED",
+    "DUPLICATE",
+    "FAILED",
+    "CANCELLED"
+)
 
 @Composable
 private fun DeleteFromFenlzerDialog(

@@ -23,6 +23,7 @@ import com.fenl.fenlzer.data.repository.StatsRepository
 import com.fenl.fenlzer.data.storage.FenlzerStorage
 import com.fenl.fenlzer.domain.delete.DeleteFromFenlzerUseCase
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.flow.first
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -86,6 +87,33 @@ class FenlzerDatabaseSmokeTest {
 
         assertEquals(1, database.importDao().getActiveJobs().size)
         assertEquals(1, database.importDao().getRecoverableYoutubeSearchJobs().size)
+    }
+
+    @Test
+    fun activeImportTerminalVisibilityAndPriorityPersist() = runTest {
+        val jobs = listOf(
+            importJob("manual", "QUEUED", 1_001, "MANUAL"),
+            importJob("automatic", "QUEUED", 1, "AUTO"),
+            importJob("completed", "COMPLETED", 1_000, "MANUAL"),
+            importJob("failed", "FAILED", 1_000, "MANUAL")
+        )
+        jobs.forEach { database.importDao().upsertJob(it) }
+
+        val initiallyVisible = database.importDao().observeActiveJobs().first()
+        assertEquals("manual", initiallyVisible.first().importJobId)
+        assertTrue(initiallyVisible.any { it.importJobId == "completed" })
+        assertTrue(initiallyVisible.any { it.importJobId == "failed" })
+
+        database.importDao().acknowledgeFinishedJobs()
+        val afterLeaving = database.importDao().observeActiveJobs().first()
+        assertFalse(afterLeaving.any { it.importJobId == "completed" })
+        assertTrue(afterLeaving.any { it.importJobId == "failed" })
+
+        database.importDao().dismissFailedJob("failed")
+        val afterDismiss = database.importDao().observeActiveJobs().first()
+        assertFalse(afterDismiss.any { it.importJobId == "failed" })
+        assertTrue(afterDismiss.indexOfFirst { it.importJobId == "manual" } <
+            afterDismiss.indexOfFirst { it.importJobId == "automatic" })
     }
 
     @Test(expected = SQLiteConstraintException::class)
@@ -460,6 +488,27 @@ class FenlzerDatabaseSmokeTest {
         originalDiscNumber = null,
         originalThumbnailKind = "NONE",
         rawMetadataJson = null
+    )
+
+    private fun importJob(
+        importJobId: String,
+        status: String,
+        priority: Int,
+        priorityClass: String
+    ): ImportJobEntity = ImportJobEntity(
+        importJobId = importJobId,
+        jobType = "YOUTUBE_SEARCH",
+        sourceType = "YOUTUBE_SEARCH",
+        reason = "MANUAL_SINGLE",
+        priorityClass = priorityClass,
+        priority = priority,
+        status = status,
+        targetFavourite = false,
+        preferredFormat = "M4A_AAC",
+        technicalDetailsJson = importJobId,
+        isVisibleInActiveImports = true,
+        createdAt = priority.toLong(),
+        updatedAt = priority.toLong()
     )
 
     private fun playlist(): PlaylistEntity = PlaylistEntity(

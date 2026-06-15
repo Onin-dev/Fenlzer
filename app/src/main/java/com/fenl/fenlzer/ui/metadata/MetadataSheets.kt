@@ -189,6 +189,8 @@ fun SongDetailsSheet(
 
             DetailSection(title = "Source Information") {
                 DetailLine("Source", details.source.sourceType)
+                DetailLine("Import reason", details.source.importReason.orEmpty())
+                DetailLine("Requested format", details.source.requestedDownloadFormat.orEmpty())
                 DetailLine("Original filename", details.source.originalFilename.orEmpty())
                 DetailLine("YouTube ID", details.source.youtubeVideoId.orEmpty())
                 DetailLine("URL", details.source.sourceUrl.orEmpty())

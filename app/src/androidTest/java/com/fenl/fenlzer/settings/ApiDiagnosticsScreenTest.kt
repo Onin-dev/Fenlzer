@@ -1,14 +1,20 @@
 package com.fenl.fenlzer.settings
 
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.fenl.fenlzer.data.local.entity.ApiDiagnosticEntryEntity
+import com.fenl.fenlzer.data.repository.ApiDiagnosticItem
+import com.fenl.fenlzer.data.repository.ApiDiagnosticSource
 import com.fenl.fenlzer.ui.theme.FenlzerTheme
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -23,9 +29,13 @@ class ApiDiagnosticsScreenTest {
         composeRule.setContent {
             FenlzerTheme {
                 ApiDiagnosticsScreen(
-                    entries = listOf(successEntry(), failedEntry()),
+                    localEntries = listOf(successEntry()),
+                    serverEntries = listOf(failedEntry()),
+                    serverLoading = false,
+                    serverError = null,
                     onBack = {},
-                    onClearDiagnostics = {}
+                    onClearDiagnostics = {},
+                    onRefreshServer = {}
                 )
             }
         }
@@ -37,12 +47,40 @@ class ApiDiagnosticsScreenTest {
         composeRule.onNodeWithTag("diagnosticsFilterfailed").performClick()
 
         composeRule.onNodeWithText("POST /v1/youtube/search").assertIsDisplayed()
-        composeRule.onNodeWithText("GET /v1/health").assertDoesNotExist()
-        composeRule.onNodeWithText("UNAUTHORIZED").assertIsDisplayed()
+        composeRule.onAllNodesWithText("GET /v1/health").assertCountEquals(0)
+        composeRule.onNodeWithTag("diagnosticsList").performTouchInput { swipeUp() }
+        composeRule.onNodeWithText("Error: UNAUTHORIZED").assertIsDisplayed()
+        composeRule.onNodeWithText("Server").assertIsDisplayed()
     }
 
-    private fun successEntry() = ApiDiagnosticEntryEntity(
+    @Test
+    fun clearingDiagnosticsRequiresConfirmationAndClearsLocalOnly() {
+        var clearCount = 0
+        composeRule.setContent {
+            FenlzerTheme {
+                ApiDiagnosticsScreen(
+                    localEntries = listOf(successEntry()),
+                    serverEntries = listOf(failedEntry()),
+                    serverLoading = false,
+                    serverError = null,
+                    onBack = {},
+                    onClearDiagnostics = { clearCount += 1 },
+                    onRefreshServer = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithContentDescription("Clear diagnostics").performClick()
+        composeRule.onNodeWithText("Clear API diagnostics?").assertIsDisplayed()
+        composeRule.onNodeWithText("Clear").performClick()
+
+        assertEquals(1, clearCount)
+        composeRule.onNodeWithText("POST /v1/youtube/search").assertIsDisplayed()
+    }
+
+    private fun successEntry() = ApiDiagnosticItem(
         diagnosticId = "diag_success",
+        source = ApiDiagnosticSource.LOCAL,
         requestId = "req_success",
         endpoint = "/v1/health",
         method = "GET",
@@ -51,12 +89,12 @@ class ApiDiagnosticsScreenTest {
         statusCode = 200,
         success = true,
         errorCode = null,
-        sanitizedMessage = null,
-        metadataJson = null
+        sanitizedMessage = null
     )
 
-    private fun failedEntry() = ApiDiagnosticEntryEntity(
+    private fun failedEntry() = ApiDiagnosticItem(
         diagnosticId = "diag_failed",
+        source = ApiDiagnosticSource.SERVER,
         requestId = "req_failed",
         endpoint = "/v1/youtube/search",
         method = "POST",
@@ -65,7 +103,6 @@ class ApiDiagnosticsScreenTest {
         statusCode = 401,
         success = false,
         errorCode = "UNAUTHORIZED",
-        sanitizedMessage = "Missing bearer token.",
-        metadataJson = null
+        sanitizedMessage = "Missing bearer token."
     )
 }

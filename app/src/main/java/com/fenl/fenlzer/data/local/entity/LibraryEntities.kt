@@ -70,6 +70,8 @@ data class TrackEntity(
     val durationMs: Long,
     val notes: String,
     val sourceType: String,
+    val importReason: String? = null,
+    val requestedDownloadFormat: String? = null,
     val youtubeVideoId: String? = null,
     val sourceUrl: String? = null,
     val originalFilename: String? = null,

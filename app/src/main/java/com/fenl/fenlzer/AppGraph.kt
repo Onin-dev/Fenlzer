@@ -7,6 +7,7 @@ import com.fenl.fenlzer.data.remote.ApiRepository
 import com.fenl.fenlzer.data.remote.NoOpApiDiagnosticRecorder
 import com.fenl.fenlzer.data.remote.RoomApiDiagnosticRecorder
 import com.fenl.fenlzer.data.repository.MetadataRepository
+import com.fenl.fenlzer.data.repository.ApiDiagnosticsRepository
 import com.fenl.fenlzer.data.repository.PlaylistRepository
 import com.fenl.fenlzer.data.repository.QueueRepository
 import com.fenl.fenlzer.data.repository.DiscoverRepository
@@ -22,6 +23,7 @@ import com.fenl.fenlzer.data.storage.FenlzerStorage
 import com.fenl.fenlzer.data.storage.StorageUsageRepository
 import com.fenl.fenlzer.domain.delete.DeleteFromFenlzerUseCase
 import com.fenl.fenlzer.importing.local.AndroidLocalAudioMetadataExtractor
+import com.fenl.fenlzer.importing.ImportQueueCoordinator
 import com.fenl.fenlzer.importing.local.LocalImportRepository
 import com.fenl.fenlzer.importing.youtube.YoutubeImportCoordinator
 import com.fenl.fenlzer.importing.youtube.YoutubeImportRepository
@@ -52,7 +54,9 @@ class AppGraph(
     val playbackController: PlaybackController? = null,
     val localImportRepository: LocalImportRepository? = null,
     val youtubeImportRepository: YoutubeImportRepository? = null,
+    val importQueueCoordinator: ImportQueueCoordinator? = null,
     val youtubeImportCoordinator: YoutubeImportCoordinator? = null,
+    val apiDiagnosticsRepository: ApiDiagnosticsRepository? = null,
     val apiRepository: ApiRepository = ApiRepository(
         settingsRepository = settingsRepository,
         tokenStore = apiTokenStore,
@@ -152,6 +156,10 @@ class AppGraph(
                 diagnosticRecorder = RoomApiDiagnosticRecorder(database.apiDiagnosticDao()),
                 dispatchers = dispatchers
             )
+            val apiDiagnosticsRepository = ApiDiagnosticsRepository(
+                localDao = database.apiDiagnosticDao(),
+                remoteSource = apiRepository
+            )
             val remoteStreamResolver = RemoteStreamResolver(
                 apiRepository = apiRepository,
                 remoteDiscoverDao = database.remoteDiscoverDao()
@@ -173,8 +181,15 @@ class AppGraph(
                 storage = storage,
                 dispatchers = dispatchers
             )
+            val importQueueCoordinator = ImportQueueCoordinator(
+                context = appContext,
+                importDao = database.importDao(),
+                localRepository = localImportRepository,
+                youtubeRepository = youtubeImportRepository
+            )
             val youtubeImportCoordinator = YoutubeImportCoordinator(
                 repository = youtubeImportRepository,
+                importQueueCoordinator = importQueueCoordinator,
                 scope = scope
             )
             val discoverRepository = DiscoverRepository(
@@ -207,7 +222,9 @@ class AppGraph(
                 playbackController = playbackController,
                 localImportRepository = localImportRepository,
                 youtubeImportRepository = youtubeImportRepository,
+                importQueueCoordinator = importQueueCoordinator,
                 youtubeImportCoordinator = youtubeImportCoordinator,
+                apiDiagnosticsRepository = apiDiagnosticsRepository,
                 apiRepository = apiRepository,
                 appScope = scope
             ).also { graph ->
