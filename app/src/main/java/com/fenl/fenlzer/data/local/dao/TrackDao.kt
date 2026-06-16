@@ -57,6 +57,16 @@ interface TrackDao {
     @Query("SELECT * FROM thumbnail_assets WHERE thumbnailAssetId = :thumbnailAssetId")
     suspend fun getThumbnailAsset(thumbnailAssetId: String): ThumbnailAssetEntity?
 
+    @Query(
+        """
+        SELECT * FROM thumbnail_assets
+        WHERE contentHash = :contentHash AND isPermanent = 1
+        ORDER BY createdAt ASC
+        LIMIT 1
+        """
+    )
+    suspend fun getPermanentThumbnailAssetByHash(contentHash: String): ThumbnailAssetEntity?
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertTrack(track: TrackEntity)
 
@@ -76,6 +86,26 @@ interface TrackDao {
     ) {
         insertTrack(track)
         insertOriginalMetadata(originalMetadata)
+    }
+
+    @Transaction
+    suspend fun insertTrackWithOriginalMetadataAndThumbnail(
+        track: TrackEntity,
+        originalMetadata: TrackOriginalMetadataEntity,
+        thumbnailAsset: ThumbnailAssetEntity?
+    ) {
+        thumbnailAsset?.let { upsertThumbnailAsset(it) }
+        insertTrack(track)
+        insertOriginalMetadata(originalMetadata)
+    }
+
+    @Transaction
+    suspend fun updateTrackWithThumbnailAsset(
+        track: TrackEntity,
+        thumbnailAsset: ThumbnailAssetEntity
+    ) {
+        upsertThumbnailAsset(thumbnailAsset)
+        updateTrack(track)
     }
 
     @Upsert

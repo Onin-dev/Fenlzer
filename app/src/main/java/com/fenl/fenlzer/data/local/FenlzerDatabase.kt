@@ -56,7 +56,7 @@ import com.fenl.fenlzer.data.local.entity.TrackStatsSnapshotEntity
         ImportHistoryEntryEntity::class,
         ApiDiagnosticEntryEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 abstract class FenlzerDatabase : RoomDatabase() {
@@ -239,11 +239,49 @@ abstract class FenlzerDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
+                    "ALTER TABLE track_stats_snapshots ADD COLUMN completionSampleCount INTEGER NOT NULL DEFAULT 0"
+                )
+                connection.execSQL(
+                    "ALTER TABLE playback_progress_recovery ADD COLUMN privateMode INTEGER NOT NULL DEFAULT 0"
+                )
+                connection.execSQL(
+                    """
+                    UPDATE track_stats_snapshots
+                    SET completionSampleCount = CASE
+                            WHEN (
+                                SELECT COUNT(*) FROM playback_events
+                                WHERE playback_events.trackId = track_stats_snapshots.trackId
+                            ) > 0 THEN (
+                                SELECT COUNT(*) FROM playback_events
+                                WHERE playback_events.trackId = track_stats_snapshots.trackId
+                            )
+                            WHEN totalListenedMs > 0 THEN MAX(playCount + skipCount, 1)
+                            ELSE 0
+                        END,
+                        averageCompletionPercent = COALESCE(
+                            (
+                                SELECT AVG(completionPercent) FROM playback_events
+                                WHERE playback_events.trackId = track_stats_snapshots.trackId
+                            ),
+                            averageCompletionPercent
+                        )
+                    """.trimIndent()
+                )
+                connection.execSQL(
+                    "UPDATE discover_snapshots SET lastOpenedAt = generatedAt"
+                )
+            }
+        }
+
         val ALL_MIGRATIONS = arrayOf(
             MIGRATION_1_2,
             MIGRATION_2_3,
             MIGRATION_3_4,
-            MIGRATION_4_5
+            MIGRATION_4_5,
+            MIGRATION_5_6
         )
     }
 }

@@ -93,6 +93,19 @@ interface PlaybackDao {
         progressId: String = DEFAULT_RECOVERY_PROGRESS_ID
     )
 
+    @Query(
+        """
+        DELETE FROM playback_progress_recovery
+        WHERE progressId = :progressId
+          AND startedAt = :startedAt
+          AND privateMode = 0
+        """
+    )
+    suspend fun clearPlaybackProgressRecoveryForPlayback(
+        startedAt: Long,
+        progressId: String = DEFAULT_RECOVERY_PROGRESS_ID
+    )
+
     @Query("DELETE FROM playback_events")
     suspend fun clearPlaybackEvents()
 

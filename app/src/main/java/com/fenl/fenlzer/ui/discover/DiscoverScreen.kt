@@ -66,6 +66,7 @@ fun DiscoverScreen(
     onPlay: (String) -> Unit,
     onPlayNext: (String) -> Unit,
     onAddToQueue: (String) -> Unit,
+    onAddToPlaylist: (String, String) -> Unit,
     onImport: (String) -> Unit,
     onFavourite: (String) -> Unit,
     modifier: Modifier = Modifier
@@ -114,6 +115,7 @@ fun DiscoverScreen(
                         onPlay = { onPlay(item.remoteItemId) },
                         onPlayNext = { onPlayNext(item.remoteItemId) },
                         onAddToQueue = { onAddToQueue(item.remoteItemId) },
+                        onAddToPlaylist = { onAddToPlaylist(item.remoteItemId, item.title) },
                         onImport = { onImport(item.remoteItemId) },
                         onFavourite = { onFavourite(item.remoteItemId) }
                     )
@@ -212,6 +214,7 @@ private fun DiscoverRow(
     onPlay: () -> Unit,
     onPlayNext: () -> Unit,
     onAddToQueue: () -> Unit,
+    onAddToPlaylist: () -> Unit,
     onImport: () -> Unit,
     onFavourite: () -> Unit
 ) {
@@ -306,6 +309,20 @@ private fun DiscoverRow(
                         onClick = {
                             menuExpanded = false
                             onAddToQueue()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(text = "Add to Playlist") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                                contentDescription = null
+                            )
+                        },
+                        enabled = item.canDownload,
+                        onClick = {
+                            menuExpanded = false
+                            onAddToPlaylist()
                         }
                     )
                     DropdownMenuItem(

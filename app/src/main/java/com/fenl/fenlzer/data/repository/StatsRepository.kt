@@ -31,13 +31,14 @@ class StatsRepository(
     private val zoneId: ZoneId = ZoneId.systemDefault()
 ) {
     private val writeMutex = Mutex()
+    private val recoveryMutex = Mutex()
 
     fun observeStatisticsSummary(): Flow<StatisticsSummary> {
         return combine(
             trackDao.observeTracksByRecentlyAdded(),
             playlistDao.observePlaylists(),
             playbackDao.observeTrackStatsSnapshots(),
-            playbackDao.observeRecentEvents(limit = 500),
+            playbackDao.observePlaybackEvents(),
             playbackDao.observeSessions()
         ) { tracks, playlists, stats, events, sessions ->
             buildSummary(
@@ -100,30 +101,50 @@ class StatsRepository(
             draft.trackId?.let { trackId ->
                 updateTrackStats(trackId = trackId, event = event)
             }
-            playbackDao.clearPlaybackProgressRecovery()
+            recoveryMutex.withLock {
+                playbackDao.clearPlaybackProgressRecoveryForPlayback(startedAt = event.startedAt)
+            }
         }
     }
 
     suspend fun savePlaybackProgress(progress: PlaybackRecoveryProgress) = withContext(dispatchers.io) {
         if (progress.trackId == null && progress.remoteItemId == null) return@withContext
-        playbackDao.upsertPlaybackProgressRecovery(
-            PlaybackProgressRecoveryEntity(
-                progressId = PlaybackDao.DEFAULT_RECOVERY_PROGRESS_ID,
-                queueItemId = progress.queueItemId,
-                trackId = progress.trackId,
-                remoteItemId = progress.remoteItemId,
-                startedAt = progress.startedAt,
-                lastUpdatedAt = progress.lastUpdatedAt,
-                listenedMs = progress.listenedMs.coerceAtLeast(0L),
-                durationMsAtPlayback = progress.durationMsAtPlayback.coerceAtLeast(0L),
-                lastPositionMs = progress.lastPositionMs.coerceAtLeast(0L),
-                sourceContext = progress.sourceContext
+        recoveryMutex.withLock {
+            val existing = playbackDao.getPlaybackProgressRecovery()
+            if (
+                existing?.privateMode == true &&
+                existing.lastUpdatedAt >= progress.lastUpdatedAt
+            ) {
+                return@withLock
+            }
+            playbackDao.upsertPlaybackProgressRecovery(
+                PlaybackProgressRecoveryEntity(
+                    progressId = PlaybackDao.DEFAULT_RECOVERY_PROGRESS_ID,
+                    queueItemId = progress.queueItemId,
+                    trackId = progress.trackId,
+                    remoteItemId = progress.remoteItemId,
+                    startedAt = progress.startedAt,
+                    lastUpdatedAt = progress.lastUpdatedAt,
+                    listenedMs = progress.listenedMs.coerceAtLeast(0L),
+                    durationMsAtPlayback = progress.durationMsAtPlayback.coerceAtLeast(0L),
+                    lastPositionMs = progress.lastPositionMs.coerceAtLeast(0L),
+                    sourceContext = progress.sourceContext,
+                    privateMode = progress.privateMode
+                )
             )
-        )
+        }
     }
 
     suspend fun recoverPlaybackProgressIfAny() = withContext(dispatchers.io) {
-        val recovery = playbackDao.getPlaybackProgressRecovery() ?: return@withContext
+        val recovery = recoveryMutex.withLock {
+            val stored = playbackDao.getPlaybackProgressRecovery() ?: return@withLock null
+            if (stored.privateMode) {
+                playbackDao.clearPlaybackProgressRecovery()
+                null
+            } else {
+                stored
+            }
+        } ?: return@withContext
         recordPlayback(
             PlaybackEventDraft(
                 trackId = recovery.trackId,
@@ -141,14 +162,38 @@ class StatsRepository(
     }
 
     suspend fun clearPlaybackProgressRecovery() = withContext(dispatchers.io) {
-        playbackDao.clearPlaybackProgressRecovery()
+        recoveryMutex.withLock {
+            playbackDao.clearPlaybackProgressRecovery()
+        }
+    }
+
+    suspend fun markPrivateModeRecoveryBarrier(timestamp: Long = now()) = withContext(dispatchers.io) {
+        recoveryMutex.withLock {
+            playbackDao.upsertPlaybackProgressRecovery(
+                PlaybackProgressRecoveryEntity(
+                    progressId = PlaybackDao.DEFAULT_RECOVERY_PROGRESS_ID,
+                    queueItemId = null,
+                    trackId = null,
+                    remoteItemId = null,
+                    startedAt = timestamp,
+                    lastUpdatedAt = timestamp,
+                    listenedMs = 0L,
+                    durationMsAtPlayback = 0L,
+                    lastPositionMs = 0L,
+                    sourceContext = PRIVATE_MODE_RECOVERY_SOURCE,
+                    privateMode = true
+                )
+            )
+        }
     }
 
     suspend fun clearListeningHistory() = withContext(dispatchers.io) {
         writeMutex.withLock {
             playbackDao.clearPlaybackEvents()
             playbackDao.clearPlaybackSessions()
-            playbackDao.clearPlaybackProgressRecovery()
+            recoveryMutex.withLock {
+                playbackDao.clearPlaybackProgressRecovery()
+            }
         }
     }
 
@@ -157,7 +202,9 @@ class StatsRepository(
             playbackDao.clearPlaybackEvents()
             playbackDao.clearPlaybackSessions()
             playbackDao.clearTrackStatsSnapshots()
-            playbackDao.clearPlaybackProgressRecovery()
+            recoveryMutex.withLock {
+                playbackDao.clearPlaybackProgressRecovery()
+            }
         }
     }
 
@@ -169,7 +216,9 @@ class StatsRepository(
                     updateTrackStats(trackId = trackId, event = event.copy(trackId = trackId, remoteItemId = null))
                 }
                 playbackDao.convertRemoteEventsToTrack(remoteItemId = remoteItemId, trackId = trackId)
-                playbackDao.convertRemoteProgressToTrack(remoteItemId = remoteItemId, trackId = trackId)
+                recoveryMutex.withLock {
+                    playbackDao.convertRemoteProgressToTrack(remoteItemId = remoteItemId, trackId = trackId)
+                }
             }
         }
 
@@ -213,13 +262,11 @@ class StatsRepository(
         event: PlaybackEventEntity
     ) {
         val current = playbackDao.getTrackStats(trackId)
-        val oldAverageSamples = current
-            ?.let { (it.playCount + it.skipCount).coerceAtLeast(1) }
-            ?: 0
-        val nextAverage = if (current == null || oldAverageSamples == 0) {
+        val oldAverageSamples = current?.completionSampleCount ?: 0
+        val nextAverage = if (oldAverageSamples == 0) {
             event.completionPercent
         } else {
-            ((current.averageCompletionPercent * oldAverageSamples) + event.completionPercent) /
+            (((current?.averageCompletionPercent ?: 0f) * oldAverageSamples) + event.completionPercent) /
                 (oldAverageSamples + 1)
         }
         val validListenIncrement = if (event.validListen) 1 else 0
@@ -241,6 +288,7 @@ class StatsRepository(
                 } else {
                     current?.lastPlayedAt
                 },
+                completionSampleCount = oldAverageSamples + 1,
                 averageCompletionPercent = nextAverage.coerceIn(0f, 1f)
             )
         )
@@ -410,12 +458,14 @@ class StatsRepository(
     companion object {
         private const val RECENTLY_REDISCOVERED_WINDOW_MS = 14L * 24L * 60L * 60L * 1_000L
         private const val RECENTLY_REDISCOVERED_GAP_MS = 20L * 24L * 60L * 60L * 1_000L
+        private const val PRIVATE_MODE_RECOVERY_SOURCE = "PRIVATE_MODE_EXCLUDED"
     }
 }
 
 object PlaybackStatsRules {
     const val VALID_LISTEN_MAX_THRESHOLD_MS = 15_000L
     const val SESSION_GAP_MS = 5L * 60L * 1_000L
+    const val REPEAT_LOOP_EDGE_MS = 2_000L
 
     fun validListenThreshold(durationMs: Long): Long {
         return if (durationMs > 0L) {
@@ -446,6 +496,17 @@ object PlaybackStatsRules {
         if (durationMs <= 0L) return 0f
         return (listenedMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
     }
+
+    fun isRepeatLoopDetected(
+        previousPositionMs: Long,
+        positionMs: Long,
+        durationMs: Long
+    ): Boolean {
+        if (durationMs <= 0L) return false
+        return previousPositionMs >= durationMs - REPEAT_LOOP_EDGE_MS &&
+            positionMs <= REPEAT_LOOP_EDGE_MS &&
+            previousPositionMs - positionMs > REPEAT_LOOP_EDGE_MS
+    }
 }
 
 data class PlaybackEventDraft(
@@ -470,7 +531,8 @@ data class PlaybackRecoveryProgress(
     val listenedMs: Long,
     val durationMsAtPlayback: Long,
     val lastPositionMs: Long,
-    val sourceContext: String
+    val sourceContext: String,
+    val privateMode: Boolean = false
 )
 
 data class StatisticsSummary(

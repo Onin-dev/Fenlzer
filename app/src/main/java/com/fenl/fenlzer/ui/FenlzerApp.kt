@@ -206,7 +206,7 @@ private fun FenlzerScaffold(
         onImportRequested()
     }
     var showQueuePanel by remember { mutableStateOf(false) }
-    var addToPlaylistTarget by remember { mutableStateOf<PendingAddToPlaylist?>(null) }
+    var addToPlaylistTarget by remember { mutableStateOf<PendingPlaylistAction?>(null) }
     var detailsTrackId by rememberSaveable { mutableStateOf<String?>(null) }
     var editorTrackId by rememberSaveable { mutableStateOf<String?>(null) }
     var thumbnailTrackId by remember { mutableStateOf<String?>(null) }
@@ -214,10 +214,15 @@ private fun FenlzerScaffold(
     var pendingDetailsDelete by remember { mutableStateOf<PendingDeleteSong?>(null) }
     val membershipTargetsFlow = remember(
         appGraph.playlistRepository,
-        addToPlaylistTarget?.trackId
+        addToPlaylistTarget
     ) {
-        addToPlaylistTarget?.trackId?.let { trackId ->
-            appGraph.playlistRepository?.observeMembershipTargets(trackId)
+        when (val target = addToPlaylistTarget) {
+            is PendingPlaylistAction.LocalTrack ->
+                appGraph.playlistRepository?.observeMembershipTargets(target.trackId)
+            is PendingPlaylistAction.RemoteTrack,
+            is PendingPlaylistAction.ImportedBatch ->
+                appGraph.playlistRepository?.observeRegularPlaylistTargets()
+            null -> null
         }
     }
     val membershipTargets by membershipTargetsFlow
@@ -225,7 +230,64 @@ private fun FenlzerScaffold(
         ?: remember { mutableStateOf(emptyList()) }
 
     fun openAddToPlaylist(trackId: String, title: String) {
-        addToPlaylistTarget = PendingAddToPlaylist(trackId = trackId, title = title)
+        addToPlaylistTarget = PendingPlaylistAction.LocalTrack(trackId = trackId, title = title)
+    }
+
+    fun openRemoteAddToPlaylist(remoteItemId: String, title: String) {
+        addToPlaylistTarget = PendingPlaylistAction.RemoteTrack(
+            remoteItemId = remoteItemId,
+            title = title
+        )
+    }
+
+    fun openImportedBatchAddToPlaylist(trackIds: List<String>) {
+        val distinctIds = trackIds.distinct()
+        if (distinctIds.isEmpty()) return
+        addToPlaylistTarget = PendingPlaylistAction.ImportedBatch(
+            trackIds = distinctIds,
+            title = if (distinctIds.size == 1) "1 imported song" else "${distinctIds.size} imported songs"
+        )
+    }
+
+    fun toggleCurrentFavourite() {
+        val currentItem = playbackState.currentItem ?: return
+        val localTrackId = currentItem.localTrackId
+        if (localTrackId != null) {
+            appGraph.trackRepository?.let { repository ->
+                coroutineScope.launch {
+                    repository.setFavourite(
+                        trackId = localTrackId,
+                        isFavourite = !currentItem.isFavourite
+                    )
+                }
+            }
+            return
+        }
+        val remoteItemId = currentItem.remoteItemId ?: return
+        appGraph.discoverRepository?.let { repository ->
+            coroutineScope.launch {
+                runCatching { repository.importRemote(remoteItemId, favourite = true) }
+                    .onSuccess {
+                        Toast.makeText(context, "Favourite import queued.", Toast.LENGTH_SHORT).show()
+                    }
+                    .onFailure { throwable ->
+                        Toast.makeText(
+                            context,
+                            throwable.localizedMessage ?: "Fenlzer could not favourite this song.",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+            }
+        }
+    }
+
+    fun openCurrentAddToPlaylist() {
+        playbackState.currentItem?.let { item ->
+            when {
+                item.localTrackId != null -> openAddToPlaylist(item.localTrackId, item.displayTitle)
+                item.remoteItemId != null -> openRemoteAddToPlaylist(item.remoteItemId, item.displayTitle)
+            }
+        }
     }
 
     fun openSongDetails(trackId: String) {
@@ -345,9 +407,45 @@ private fun FenlzerScaffold(
             trackTitle = target.title,
             targets = membershipTargets,
             onToggleTarget = { membershipTarget ->
-                appGraph.playlistRepository?.let { repository ->
-                    coroutineScope.launch {
-                        repository.toggleMembership(membershipTarget, target.trackId)
+                when (target) {
+                    is PendingPlaylistAction.LocalTrack -> {
+                        appGraph.playlistRepository?.let { repository ->
+                            coroutineScope.launch {
+                                repository.toggleMembership(membershipTarget, target.trackId)
+                            }
+                        }
+                    }
+                    is PendingPlaylistAction.RemoteTrack -> {
+                        appGraph.discoverRepository?.let { repository ->
+                            coroutineScope.launch {
+                                runCatching {
+                                    repository.importRemoteToPlaylist(
+                                        remoteItemId = target.remoteItemId,
+                                        playlistId = membershipTarget.targetId
+                                    )
+                                }.onSuccess {
+                                    Toast.makeText(context, "Playlist import queued.", Toast.LENGTH_SHORT).show()
+                                }.onFailure { throwable ->
+                                    Toast.makeText(
+                                        context,
+                                        throwable.localizedMessage ?: "Fenlzer could not queue this playlist add.",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        }
+                        addToPlaylistTarget = null
+                    }
+                    is PendingPlaylistAction.ImportedBatch -> {
+                        appGraph.playlistRepository?.let { repository ->
+                            coroutineScope.launch {
+                                repository.addTracksToPlaylist(
+                                    playlistId = membershipTarget.targetId,
+                                    trackIds = target.trackIds
+                                )
+                            }
+                        }
+                        addToPlaylistTarget = null
                     }
                 }
             },
@@ -441,30 +539,11 @@ private fun FenlzerScaffold(
                             onImportRequested()
                         }
                     },
-                    onToggleFavourite = {
-                        val currentItem = playbackState.currentItem
-                        val localTrackId = currentItem?.localTrackId
-                        if (localTrackId != null) {
-                            appGraph.trackRepository?.let { repository ->
-                                coroutineScope.launch {
-                                    repository.setFavourite(
-                                        trackId = localTrackId,
-                                        isFavourite = !currentItem.isFavourite
-                                    )
-                                }
-                            }
-                        }
-                    },
+                    onToggleFavourite = ::toggleCurrentFavourite,
                     onPlayPause = { appGraph.playbackController?.togglePlayPause() },
                     onNext = { appGraph.playbackController?.skipNext() },
                     onSeekTo = { positionMs -> appGraph.playbackController?.seekTo(positionMs) },
-                    onAddToPlaylist = {
-                        playbackState.currentItem?.let { item ->
-                            item.localTrackId?.let { trackId ->
-                                openAddToPlaylist(trackId, item.displayTitle)
-                            }
-                        }
-                    },
+                    onAddToPlaylist = ::openCurrentAddToPlaylist,
                     onOpenSongDetails = {
                         playbackState.currentItem?.localTrackId?.let(::openSongDetails)
                     },
@@ -502,6 +581,10 @@ private fun FenlzerScaffold(
                 onCloseQueue = ::closeQueue,
                 onOpenQueue = ::openQueue,
                 onAddToPlaylist = ::openAddToPlaylist,
+                onAddRemoteToPlaylist = ::openRemoteAddToPlaylist,
+                onAddImportedBatchToPlaylist = ::openImportedBatchAddToPlaylist,
+                onToggleCurrentFavourite = ::toggleCurrentFavourite,
+                onAddCurrentToPlaylist = ::openCurrentAddToPlaylist,
                 onOpenSongDetails = ::openSongDetails,
                 onEditMetadata = ::openMetadataEditor,
                 onChangeAlbumThumbnail = { albumKey, overwriteExistingCustom ->
@@ -567,6 +650,10 @@ private fun FenlzerNavHost(
     onCloseQueue: () -> Unit,
     onOpenQueue: () -> Unit,
     onAddToPlaylist: (String, String) -> Unit,
+    onAddRemoteToPlaylist: (String, String) -> Unit,
+    onAddImportedBatchToPlaylist: (List<String>) -> Unit,
+    onToggleCurrentFavourite: () -> Unit,
+    onAddCurrentToPlaylist: () -> Unit,
     onOpenSongDetails: (String) -> Unit,
     onEditMetadata: (String) -> Unit,
     onChangeAlbumThumbnail: (String, Boolean) -> Unit,
@@ -610,6 +697,8 @@ private fun FenlzerNavHost(
     var selectedSmartPlaylistId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedArtistName by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedAlbumKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var homeHighlightTrackIds by remember { mutableStateOf(emptyList<String>()) }
+    var homeHighlightRequestId by rememberSaveable { mutableStateOf(0) }
     var customThumbnailPlaylistId by remember { mutableStateOf<String?>(null) }
     var pendingDeleteTracks by remember { mutableStateOf(emptyList<LibraryTrack>()) }
     var storageUsage by remember { mutableStateOf<FenlzerStorageUsage?>(null) }
@@ -948,7 +1037,9 @@ private fun FenlzerNavHost(
                 onOpenSongDetails = { track -> onOpenSongDetails(track.trackId) },
                 onEditMetadata = { track -> onEditMetadata(track.trackId) },
                 onDeleteTracks = ::requestDeleteTracks,
-                defaultHomeSort = appSettings.defaultHomeSort
+                defaultHomeSort = appSettings.defaultHomeSort,
+                highlightedTrackIds = homeHighlightTrackIds.toSet(),
+                highlightRequestId = homeHighlightRequestId
             )
         }
         composable(FenlzerRoute.Playlists.route) {
@@ -980,6 +1071,7 @@ private fun FenlzerNavHost(
                         onPlay = ::playDiscoverItem,
                         onPlayNext = ::playDiscoverItemNext,
                         onAddToQueue = ::addDiscoverItemToQueue,
+                        onAddToPlaylist = onAddRemoteToPlaylist,
                         onImport = { remoteItemId -> importDiscoverItem(remoteItemId, favourite = false) },
                         onFavourite = { remoteItemId -> importDiscoverItem(remoteItemId, favourite = true) }
                     )
@@ -1105,7 +1197,20 @@ private fun FenlzerNavHost(
                 onClearYoutubeHistory = youtubeImportViewModel::clearHistory,
                 onRetryYoutubeHistoryItem = youtubeImportViewModel::retryHistoryItem,
                 onRetryFailed = localImportViewModel::importUris,
-                onViewLibrary = {
+                onPlayImportedSongs = { trackIds ->
+                    appGraph.playbackController?.playFromTrackList(
+                        trackIds = trackIds,
+                        startTrackId = trackIds.firstOrNull(),
+                        sourceType = "LOCAL_IMPORT_RESULT",
+                        sourceId = null,
+                        sourceLabel = "Imported songs",
+                        insertedBy = "LOCAL_IMPORT_RESULT"
+                    )
+                },
+                onAddImportedSongsToPlaylist = onAddImportedBatchToPlaylist,
+                onViewLibrary = { trackIds ->
+                    homeHighlightTrackIds = trackIds.distinct()
+                    homeHighlightRequestId += 1
                     navController.navigate(FenlzerRoute.Home.route) {
                         popUpTo(navController.graph.findStartDestination().id) {
                             saveState = true
@@ -1198,33 +1303,14 @@ private fun FenlzerNavHost(
                         }
                     }
                 },
-                onToggleFavourite = {
-                    val currentItem = playbackState.currentItem
-                    val localTrackId = currentItem?.localTrackId
-                    if (localTrackId != null) {
-                        appGraph.trackRepository?.let { repository ->
-                            coroutineScope.launch {
-                                repository.setFavourite(
-                                    trackId = localTrackId,
-                                    isFavourite = !currentItem.isFavourite
-                                )
-                            }
-                        }
-                    }
-                },
+                onToggleFavourite = onToggleCurrentFavourite,
                 onPlayPause = { appGraph.playbackController?.togglePlayPause() },
                 onPrevious = { appGraph.playbackController?.previous() },
                 onNext = { appGraph.playbackController?.skipNext() },
                 onSeekTo = { positionMs -> appGraph.playbackController?.seekTo(positionMs) },
                 onToggleRepeat = { appGraph.playbackController?.cycleRepeatMode() },
                 onToggleShuffle = { appGraph.playbackController?.toggleShuffle() },
-                onAddToPlaylist = {
-                    playbackState.currentItem?.let { item ->
-                        item.localTrackId?.let { trackId ->
-                            onAddToPlaylist(trackId, item.displayTitle)
-                        }
-                    }
-                },
+                onAddToPlaylist = onAddCurrentToPlaylist,
                 onOpenQueue = onOpenQueue,
                 onOpenSongDetails = {
                     playbackState.currentItem?.let { item ->
@@ -1503,10 +1589,24 @@ private data class MainTab(
     val icon: ImageVector
 )
 
-private data class PendingAddToPlaylist(
-    val trackId: String,
+private sealed interface PendingPlaylistAction {
     val title: String
-)
+
+    data class LocalTrack(
+        val trackId: String,
+        override val title: String
+    ) : PendingPlaylistAction
+
+    data class RemoteTrack(
+        val remoteItemId: String,
+        override val title: String
+    ) : PendingPlaylistAction
+
+    data class ImportedBatch(
+        val trackIds: List<String>,
+        override val title: String
+    ) : PendingPlaylistAction
+}
 
 private data class PendingAlbumThumbnail(
     val albumKey: String,

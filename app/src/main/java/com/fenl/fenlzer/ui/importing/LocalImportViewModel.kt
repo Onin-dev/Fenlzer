@@ -11,6 +11,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -21,11 +23,13 @@ class LocalImportViewModel(
     val uiState: StateFlow<LocalImportUiState> = mutableUiState.asStateFlow()
 
     private var importJob: Job? = null
+    private var batchResultJob: Job? = null
 
     fun importUris(uris: List<Uri>) {
         if (uris.isEmpty() || mutableUiState.value.isRunning) return
         val coordinator = importQueueCoordinator ?: return
 
+        val startedAt = System.currentTimeMillis()
         importJob = viewModelScope.launch {
             mutableUiState.value = LocalImportUiState(
                 isRunning = true,
@@ -47,6 +51,18 @@ class LocalImportViewModel(
                             }
                         )
                     }
+                    batchResultJob?.cancel()
+                    batchResultJob = viewModelScope.launch {
+                        val result = coordinator.observeLocalImportBatch(jobIds, startedAt)
+                            .filterNotNull()
+                            .first()
+                        mutableUiState.update { current ->
+                            current.copy(
+                                result = result,
+                                message = "Import complete."
+                            )
+                        }
+                    }
                 }
                 .onFailure { throwable ->
                     mutableUiState.update { current ->
@@ -62,11 +78,14 @@ class LocalImportViewModel(
 
     fun clearResult() {
         if (mutableUiState.value.isRunning) return
+        batchResultJob?.cancel()
+        batchResultJob = null
         mutableUiState.value = LocalImportUiState()
     }
 
     override fun onCleared() {
         importJob?.cancel()
+        batchResultJob?.cancel()
         super.onCleared()
     }
 

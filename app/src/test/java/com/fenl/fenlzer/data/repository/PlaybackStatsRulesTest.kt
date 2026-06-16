@@ -56,4 +56,22 @@ class PlaybackStatsRulesTest {
     fun sessionGapIsFiveMinutes() {
         assertEquals(300_000L, PlaybackStatsRules.SESSION_GAP_MS)
     }
+
+    @Test
+    fun repeatLoopRequiresCrossingTheEndAndStartEdges() {
+        assertTrue(
+            PlaybackStatsRules.isRepeatLoopDetected(
+                previousPositionMs = 59_000L,
+                positionMs = 1_000L,
+                durationMs = 60_000L
+            )
+        )
+        assertFalse(
+            PlaybackStatsRules.isRepeatLoopDetected(
+                previousPositionMs = 30_000L,
+                positionMs = 1_000L,
+                durationMs = 60_000L
+            )
+        )
+    }
 }

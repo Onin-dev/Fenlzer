@@ -77,6 +77,9 @@ class AppGraph(
             }
             youtubeImportCoordinator?.startRecovery()
         }
+        scope.launch(dispatchers.io) {
+            discoverRepository?.refreshAtStartupIfEligible()
+        }
     }
 
     companion object {
@@ -176,8 +179,10 @@ class AppGraph(
                 trackDao = database.trackDao(),
                 importDao = database.importDao(),
                 remoteDiscoverDao = database.remoteDiscoverDao(),
+                playlistDao = database.playlistDao(),
                 queueDao = database.queueDao(),
                 statsRepository = statsRepository,
+                database = database,
                 storage = storage,
                 dispatchers = dispatchers
             )

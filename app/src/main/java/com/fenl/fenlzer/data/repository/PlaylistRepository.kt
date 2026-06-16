@@ -17,6 +17,7 @@ import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
 class PlaylistRepository(
@@ -132,6 +133,20 @@ class PlaylistRepository(
         }
     }
 
+    fun observeRegularPlaylistTargets(): Flow<List<PlaylistMembershipTarget>> =
+        playlistDao.observePlaylists().map { playlists ->
+            playlists
+                .filter { it.playlistType == PLAYLIST_TYPE_REGULAR }
+                .sortedByDescending { it.modifiedAt }
+                .map { playlist ->
+                    PlaylistMembershipTarget(
+                        targetId = playlist.playlistId,
+                        name = playlist.name,
+                        selected = false
+                    )
+                }
+        }
+
     suspend fun createPlaylist(name: String): String = withContext(dispatchers.io) {
         val playlistId = idFactory()
         val createdAt = now()
@@ -203,18 +218,19 @@ class PlaylistRepository(
     }
 
     suspend fun addTrackToPlaylist(playlistId: String, trackId: String) = withContext(dispatchers.io) {
-        if (playlistDao.countPlaylistTrack(playlistId, trackId) > 0) return@withContext
-        val position = (playlistDao.maxPlaylistTrackPosition(playlistId) ?: -1) + 1
-        playlistDao.insertPlaylistTrack(
-            PlaylistTrackEntity(
-                playlistId = playlistId,
-                trackId = trackId,
-                position = position,
-                addedAt = now()
-            )
-        )
-        playlistDao.touchPlaylist(playlistId, now())
+        playlistDao.addTrackIfMissing(playlistId, trackId, now())
     }
+
+    suspend fun addTracksToPlaylist(playlistId: String, trackIds: List<String>) =
+        withContext(dispatchers.io) {
+            trackIds.distinct().forEachIndexed { index, trackId ->
+                playlistDao.addTrackIfMissing(
+                    playlistId = playlistId,
+                    trackId = trackId,
+                    addedAt = now() + index
+                )
+            }
+        }
 
     suspend fun removeTrackFromPlaylist(
         playlistId: String,

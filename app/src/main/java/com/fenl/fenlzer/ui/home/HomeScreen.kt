@@ -66,6 +66,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -121,6 +122,8 @@ fun HomeScreen(
     onEditMetadata: (LibraryTrack) -> Unit,
     onDeleteTracks: (List<LibraryTrack>) -> Unit,
     defaultHomeSort: HomeSort,
+    highlightedTrackIds: Set<String>,
+    highlightRequestId: Int,
     modifier: Modifier = Modifier
 ) {
     var searchQuery by rememberSaveable { mutableStateOf("") }
@@ -149,6 +152,15 @@ fun HomeScreen(
         }
     }
     val selectionMode = selectedTrackIds.isNotEmpty() && mode == HomeMode.SONGS
+
+    LaunchedEffect(highlightRequestId) {
+        if (highlightRequestId > 0 && highlightedTrackIds.isNotEmpty()) {
+            mode = HomeMode.SONGS
+            searchQuery = ""
+            filter = LibraryFilter.ALL
+            selectedTrackIds = highlightedTrackIds.intersect(tracks.map { it.trackId }.toSet())
+        }
+    }
 
     if (selectedArtist != null) {
         ArtistDetailView(
@@ -1622,4 +1634,3 @@ private fun HomeTrackActionsMenu(
         }
     }
 }
-

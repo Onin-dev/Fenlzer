@@ -5,7 +5,11 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.fenl.fenlzer.importing.youtube.ActiveImportUiItem
+import com.fenl.fenlzer.importing.local.LocalImportBatchResult
+import com.fenl.fenlzer.importing.local.LocalImportItemResult
+import com.fenl.fenlzer.importing.local.LocalImportOutcome
 import com.fenl.fenlzer.ui.theme.FenlzerTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -49,6 +53,8 @@ class ImportScreenActiveImportsTest {
                     onClearYoutubeHistory = {},
                     onRetryYoutubeHistoryItem = {},
                     onRetryFailed = {},
+                    onPlayImportedSongs = {},
+                    onAddImportedSongsToPlaylist = {},
                     onViewLibrary = {},
                     onOpenSongDetails = {},
                     onClearResult = {},
@@ -67,6 +73,68 @@ class ImportScreenActiveImportsTest {
 
         composeRule.onNodeWithContentDescription("Dismiss failed import").performClick()
         assertEquals("failed", dismissedJobId)
+    }
+
+    @Test
+    fun deviceImportResultExposesAllCompletionActions() {
+        var playedTrackIds = emptyList<String>()
+        var playlistTrackIds = emptyList<String>()
+        var highlightedTrackIds = emptyList<String>()
+        val result = LocalImportBatchResult(
+            items = listOf(
+                LocalImportItemResult(
+                    filename = "song.mp3",
+                    displayTitle = "Song",
+                    outcome = LocalImportOutcome.SUCCESS,
+                    trackId = "track-1"
+                )
+            ),
+            startedAt = 1L,
+            completedAt = 2L
+        )
+        composeRule.setContent {
+            FenlzerTheme {
+                ImportScreen(
+                    state = LocalImportUiState(result = result),
+                    youtubeState = YoutubeImportUiState(),
+                    onImportFromDevice = {},
+                    onYoutubeQueryChanged = {},
+                    onSearchYoutube = {},
+                    onImportYoutubeResult = {},
+                    onYoutubePlaylistUrlChanged = {},
+                    onPreviewYoutubePlaylist = {},
+                    onToggleYoutubePlaylistItem = {},
+                    onSelectAllYoutubePlaylistItems = {},
+                    onImportSelectedYoutubePlaylistItems = {},
+                    onImportWholeYoutubePlaylist = {},
+                    onCancelYoutubeImport = {},
+                    onRetryYoutubeImport = {},
+                    onMoveYoutubeImport = { _, _ -> },
+                    onDismissYoutubeImport = {},
+                    onEnterActiveImports = {},
+                    onLeaveActiveImports = {},
+                    onHistoryFilterChanged = {},
+                    onClearYoutubeHistory = {},
+                    onRetryYoutubeHistoryItem = {},
+                    onRetryFailed = {},
+                    onPlayImportedSongs = { playedTrackIds = it },
+                    onAddImportedSongsToPlaylist = { playlistTrackIds = it },
+                    onViewLibrary = { highlightedTrackIds = it },
+                    onOpenSongDetails = {},
+                    onClearResult = {},
+                    onClearYoutubeResult = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Import From Device").performClick()
+        composeRule.onNodeWithText("Play imported songs").performScrollTo().performClick()
+        composeRule.onNodeWithText("Add to playlist").performScrollTo().performClick()
+        composeRule.onNodeWithText("View in Library").performScrollTo().performClick()
+
+        assertEquals(listOf("track-1"), playedTrackIds)
+        assertEquals(listOf("track-1"), playlistTrackIds)
+        assertEquals(listOf("track-1"), highlightedTrackIds)
     }
 
     private fun job(

@@ -51,6 +51,26 @@ interface PlaylistDao {
     @Query("SELECT COUNT(*) FROM playlist_tracks WHERE playlistId = :playlistId AND trackId = :trackId")
     suspend fun countPlaylistTrack(playlistId: String, trackId: String): Int
 
+    @Transaction
+    suspend fun addTrackIfMissing(
+        playlistId: String,
+        trackId: String,
+        addedAt: Long
+    ): Boolean {
+        if (countPlaylistTrack(playlistId, trackId) > 0) return false
+        val position = (maxPlaylistTrackPosition(playlistId) ?: -1) + 1
+        insertPlaylistTrack(
+            PlaylistTrackEntity(
+                playlistId = playlistId,
+                trackId = trackId,
+                position = position,
+                addedAt = addedAt
+            )
+        )
+        touchPlaylist(playlistId, addedAt)
+        return true
+    }
+
     @Query("UPDATE playlists SET name = :name, modifiedAt = :modifiedAt WHERE playlistId = :playlistId")
     suspend fun renamePlaylist(playlistId: String, name: String, modifiedAt: Long)
 

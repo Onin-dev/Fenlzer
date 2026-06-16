@@ -2,10 +2,13 @@ package com.fenl.fenlzer.playback
 
 import com.fenl.fenlzer.data.repository.PlaybackEventDraft
 import com.fenl.fenlzer.data.repository.PlaybackRecoveryProgress
+import com.fenl.fenlzer.data.repository.PlaybackStatsRules
 import com.fenl.fenlzer.data.repository.QueueTrackItem
 import com.fenl.fenlzer.data.repository.StatsRepository
 import com.fenl.fenlzer.data.settings.AppSettingsRepository
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 class PlaybackStatsTracker(
@@ -20,6 +23,18 @@ class PlaybackStatsTracker(
     init {
         scope.launch {
             statsRepository.recoverPlaybackProgressIfAny()
+        }
+        scope.launch {
+            settingsRepository.settings
+                .map { settings -> settings.privateModeEnabledForSession }
+                .distinctUntilChanged()
+                .collect { enabled ->
+                    if (enabled) {
+                        enterPrivateMode(now(), activePlayback?.lastPositionMs)
+                    } else {
+                        privateModeRecoveryCleared = false
+                    }
+                }
         }
     }
 
@@ -58,19 +73,7 @@ class PlaybackStatsTracker(
         }
 
         if (settingsRepository.settings.value.privateModeEnabledForSession) {
-            if (activePlayback != null) {
-                finishActivePlayback(
-                    manualSongChange = false,
-                    endedAt = timestamp,
-                    stopPositionMs = positionMs
-                )
-                privateModeRecoveryCleared = true
-            } else if (!privateModeRecoveryCleared) {
-                scope.launch {
-                    statsRepository.clearPlaybackProgressRecovery()
-                }
-                privateModeRecoveryCleared = true
-            }
+            enterPrivateMode(timestamp, positionMs)
             return
         }
         privateModeRecoveryCleared = false
@@ -119,7 +122,7 @@ class PlaybackStatsTracker(
         val listenedMs = currentActive.listenedMs +
             (timestamp - currentActive.lastSampleAt).coerceAtLeast(0L)
         if (
-            isRepeatLoopDetected(
+            PlaybackStatsRules.isRepeatLoopDetected(
                 previousPositionMs = currentActive.lastPositionMs,
                 positionMs = positionMs,
                 durationMs = durationMs
@@ -232,15 +235,19 @@ class PlaybackStatsTracker(
         }
     }
 
-    private fun isRepeatLoopDetected(
-        previousPositionMs: Long,
-        positionMs: Long,
-        durationMs: Long
-    ): Boolean {
-        if (durationMs <= 0L) return false
-        return previousPositionMs >= durationMs - REPEAT_LOOP_EDGE_MS &&
-            positionMs <= REPEAT_LOOP_EDGE_MS &&
-            previousPositionMs - positionMs > REPEAT_LOOP_EDGE_MS
+    private fun enterPrivateMode(timestamp: Long, stopPositionMs: Long?) {
+        if (privateModeRecoveryCleared) return
+        if (activePlayback != null) {
+            finishActivePlayback(
+                manualSongChange = false,
+                endedAt = timestamp,
+                stopPositionMs = stopPositionMs
+            )
+        }
+        scope.launch {
+            statsRepository.markPrivateModeRecoveryBarrier(timestamp)
+        }
+        privateModeRecoveryCleared = true
     }
 
     private data class ActivePlayback(
@@ -258,6 +265,5 @@ class PlaybackStatsTracker(
 
     companion object {
         private const val RECOVERY_SAVE_INTERVAL_MS = 5_000L
-        private const val REPEAT_LOOP_EDGE_MS = 2_000L
     }
 }

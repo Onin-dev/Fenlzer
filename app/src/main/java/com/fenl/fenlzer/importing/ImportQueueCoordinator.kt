@@ -13,6 +13,8 @@ import androidx.work.workDataOf
 import com.fenl.fenlzer.data.local.dao.ImportDao
 import com.fenl.fenlzer.importing.local.LocalImportProgress
 import com.fenl.fenlzer.importing.local.LocalImportRepository
+import com.fenl.fenlzer.importing.local.LocalImportBatchResult
+import com.fenl.fenlzer.importing.local.LocalImportBatchResultMapper
 import com.fenl.fenlzer.importing.youtube.ActiveImportUiItem
 import com.fenl.fenlzer.importing.youtube.ImportHistoryUiItem
 import com.fenl.fenlzer.importing.youtube.YoutubeImportItemResult
@@ -21,6 +23,7 @@ import com.fenl.fenlzer.importing.youtube.YoutubeImportRepository
 import com.fenl.fenlzer.importing.youtube.YoutubePlaylistPreview
 import com.fenl.fenlzer.importing.youtube.YoutubeSearchResultItem
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import java.util.concurrent.TimeUnit
 
 data class ImportWorkerProgress(
@@ -47,6 +50,21 @@ class ImportQueueCoordinator(
         val jobs = localRepository.prepareImportJobs(uris)
         jobs.forEach { job -> enqueue(job.importJobId, replace = false) }
         return jobs.map { it.importJobId }
+    }
+
+    fun observeLocalImportBatch(
+        importJobIds: List<String>,
+        startedAt: Long
+    ): Flow<LocalImportBatchResult?> = combine(
+        importDao.observeJobs(importJobIds),
+        importDao.observeHistoryForJobs(importJobIds)
+    ) { jobs, history ->
+        LocalImportBatchResultMapper.map(
+            expectedJobIds = importJobIds,
+            jobs = jobs,
+            history = history,
+            startedAt = startedAt
+        )
     }
 
     suspend fun enqueueYoutube(

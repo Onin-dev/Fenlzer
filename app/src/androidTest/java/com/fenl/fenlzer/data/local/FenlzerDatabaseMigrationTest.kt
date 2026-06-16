@@ -18,17 +18,17 @@ class FenlzerDatabaseMigrationTest {
 
     @Test
     fun migrateVersion1ToLatest() {
-        migrateEmptyDatabase(fromVersion = 1, name = "migration-1-to-5")
+        migrateEmptyDatabase(fromVersion = 1, name = "migration-1-to-6")
     }
 
     @Test
     fun migrateVersion2ToLatest() {
-        migrateEmptyDatabase(fromVersion = 2, name = "migration-2-to-5")
+        migrateEmptyDatabase(fromVersion = 2, name = "migration-2-to-6")
     }
 
     @Test
     fun migrateVersion3ToLatestPreservesDataAndBackfillsProvenance() {
-        val name = "migration-3-to-5"
+        val name = "migration-3-to-6"
         helper.createDatabase(name, 3).apply {
             execSQL(
                 """
@@ -75,7 +75,7 @@ class FenlzerDatabaseMigrationTest {
 
         val migrated = helper.runMigrationsAndValidate(
             name,
-            5,
+            6,
             true,
             *FenlzerDatabase.ALL_MIGRATIONS
         )
@@ -136,14 +136,93 @@ class FenlzerDatabaseMigrationTest {
 
     @Test
     fun migrateVersion4ToLatestAddsDurableWorkerState() {
-        migrateEmptyDatabase(fromVersion = 4, name = "migration-4-to-5")
+        migrateEmptyDatabase(fromVersion = 4, name = "migration-4-to-6")
+    }
+
+    @Test
+    fun migrateVersion5ToLatestBackfillsCompletionSamplesAndPrivateRecoveryState() {
+        val name = "migration-5-to-6"
+        helper.createDatabase(name, 5).apply {
+            execSQL(
+                """
+                INSERT INTO tracks (
+                    trackId, title, titleSortKey, artist, artistSortKey, album, albumSortKey,
+                    albumArtist, albumArtistSortKey, genre, durationMs, notes, sourceType,
+                    youtubeVideoId, sourceUrl, originalFilename, internalFilename, audioHash,
+                    fileSizeBytes, finalAudioFormat, isFavourite, importedAt, updatedAt,
+                    year, trackNumber, discNumber, thumbnailAssetId, embeddedThumbnailAssetId,
+                    remoteThumbnailUrl, favouritedAt, importReason, requestedDownloadFormat
+                ) VALUES (
+                    'track-stats', 'Stats song', 'stats song', 'Artist', 'artist', '', '',
+                    '', '', '', 60000, '', 'LOCAL_FILE', NULL, NULL, 'song.mp3', 'song.mp3',
+                    'hash-stats', 100, 'MP3', 0, 1, 1, NULL, NULL, NULL, NULL, NULL, NULL,
+                    NULL, NULL, NULL
+                )
+                """.trimIndent()
+            )
+            execSQL(
+                """
+                INSERT INTO playback_sessions (
+                    sessionId, startedAt, endedAt, totalListenedMs, eventCount, createdFromPrivateMode
+                ) VALUES ('session-stats', 1, 120001, 90000, 2, 0)
+                """.trimIndent()
+            )
+            execSQL(
+                """
+                INSERT INTO playback_events (
+                    eventId, trackId, remoteItemId, sessionId, startedAt, endedAt, listenedMs,
+                    durationMsAtPlayback, validListen, skip, completion, completionPercent,
+                    stopPositionMs, privateMode, sourceContext
+                ) VALUES
+                    ('event-a', 'track-stats', NULL, 'session-stats', 1, 30001, 30000,
+                     60000, 1, 0, 0, 0.5, 30000, 0, 'HOME'),
+                    ('event-b', 'track-stats', NULL, 'session-stats', 60001, 120001, 60000,
+                     60000, 1, 0, 1, 1.0, NULL, 0, 'HOME')
+                """.trimIndent()
+            )
+            execSQL(
+                """
+                INSERT INTO track_stats_snapshots (
+                    trackId, playCount, skipCount, completionCount, totalListenedMs,
+                    firstPlayedAt, lastPlayedAt, averageCompletionPercent
+                ) VALUES ('track-stats', 2, 0, 1, 90000, 1, 120001, 0.5)
+                """.trimIndent()
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(
+            name,
+            6,
+            true,
+            *FenlzerDatabase.ALL_MIGRATIONS
+        )
+
+        migrated.query(
+            """
+            SELECT completionSampleCount, averageCompletionPercent
+            FROM track_stats_snapshots WHERE trackId = 'track-stats'
+            """.trimIndent()
+        ).use { cursor ->
+            cursor.moveToFirst()
+            assertEquals(2, cursor.getInt(0))
+            assertEquals(0.75f, cursor.getFloat(1), 0.0001f)
+        }
+        migrated.query("PRAGMA table_info(playback_progress_recovery)").use { cursor ->
+            var foundPrivateMode = false
+            while (cursor.moveToNext()) {
+                if (cursor.getString(1) == "privateMode") foundPrivateMode = true
+            }
+            assertEquals(true, foundPrivateMode)
+        }
+        migrated.close()
     }
 
     private fun migrateEmptyDatabase(fromVersion: Int, name: String) {
         helper.createDatabase(name, fromVersion).close()
         helper.runMigrationsAndValidate(
             name,
-            5,
+            6,
             true,
             *FenlzerDatabase.ALL_MIGRATIONS
         ).close()

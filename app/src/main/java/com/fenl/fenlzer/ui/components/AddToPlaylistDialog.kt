@@ -50,11 +50,20 @@ fun AddToPlaylistDialog(
                         .heightIn(max = 360.dp)
                         .verticalScroll(rememberScrollState())
                 ) {
-                    targets.forEach { target ->
-                        PlaylistTargetRow(
-                            target = target,
-                            onClick = { onToggleTarget(target) }
+                    if (targets.isEmpty()) {
+                        Text(
+                            text = "Create a regular playlist first.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 12.dp)
                         )
+                    } else {
+                        targets.forEach { target ->
+                            PlaylistTargetRow(
+                                target = target,
+                                onClick = { onToggleTarget(target) }
+                            )
+                        }
                     }
                 }
             }

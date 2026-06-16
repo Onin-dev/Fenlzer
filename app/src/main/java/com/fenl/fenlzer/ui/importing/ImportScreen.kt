@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Checkbox
@@ -108,7 +109,9 @@ fun ImportScreen(
     onClearYoutubeHistory: () -> Unit,
     onRetryYoutubeHistoryItem: (ImportHistoryUiItem) -> Unit,
     onRetryFailed: (List<Uri>) -> Unit,
-    onViewLibrary: () -> Unit,
+    onPlayImportedSongs: (List<String>) -> Unit,
+    onAddImportedSongsToPlaylist: (List<String>) -> Unit,
+    onViewLibrary: (List<String>) -> Unit,
     onOpenSongDetails: (String) -> Unit,
     onClearResult: () -> Unit,
     onClearYoutubeResult: () -> Unit,
@@ -157,6 +160,8 @@ fun ImportScreen(
                     state = state,
                     onImportFromDevice = onImportFromDevice,
                     onRetryFailed = onRetryFailed,
+                    onPlayImportedSongs = onPlayImportedSongs,
+                    onAddImportedSongsToPlaylist = onAddImportedSongsToPlaylist,
                     onViewLibrary = onViewLibrary,
                     onOpenSongDetails = onOpenSongDetails,
                     onClearResult = onClearResult
@@ -389,7 +394,9 @@ private fun DeviceImportPanel(
     state: LocalImportUiState,
     onImportFromDevice: () -> Unit,
     onRetryFailed: (List<Uri>) -> Unit,
-    onViewLibrary: () -> Unit,
+    onPlayImportedSongs: (List<String>) -> Unit,
+    onAddImportedSongsToPlaylist: (List<String>) -> Unit,
+    onViewLibrary: (List<String>) -> Unit,
     onOpenSongDetails: (String) -> Unit,
     onClearResult: () -> Unit
 ) {
@@ -433,6 +440,8 @@ private fun DeviceImportPanel(
             ImportResultPanel(
                 result = result,
                 onRetryFailed = onRetryFailed,
+                onPlayImportedSongs = onPlayImportedSongs,
+                onAddImportedSongsToPlaylist = onAddImportedSongsToPlaylist,
                 onViewLibrary = onViewLibrary,
                 onOpenSongDetails = onOpenSongDetails,
                 onClearResult = onClearResult
@@ -1372,11 +1381,14 @@ private fun ImportHistoryRow(
 private fun ImportResultPanel(
     result: LocalImportBatchResult,
     onRetryFailed: (List<Uri>) -> Unit,
-    onViewLibrary: () -> Unit,
+    onPlayImportedSongs: (List<String>) -> Unit,
+    onAddImportedSongsToPlaylist: (List<String>) -> Unit,
+    onViewLibrary: (List<String>) -> Unit,
     onOpenSongDetails: (String) -> Unit,
     onClearResult: () -> Unit
 ) {
     val failedUris = result.failures.mapNotNull { it.sourceUri }
+    val importedTrackIds = result.successes.mapNotNull { it.trackId }.distinct()
 
     Column(
         modifier = Modifier
@@ -1416,7 +1428,27 @@ private fun ImportResultPanel(
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (result.successes.isNotEmpty()) {
                 Button(
-                    onClick = onViewLibrary,
+                    onClick = { onPlayImportedSongs(importedTrackIds) },
+                    enabled = importedTrackIds.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(imageVector = Icons.Rounded.PlayArrow, contentDescription = null)
+                    Text(text = "Play imported songs", modifier = Modifier.padding(start = 8.dp))
+                }
+                OutlinedButton(
+                    onClick = { onAddImportedSongsToPlaylist(importedTrackIds) },
+                    enabled = importedTrackIds.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                        contentDescription = null
+                    )
+                    Text(text = "Add to playlist", modifier = Modifier.padding(start = 8.dp))
+                }
+                Button(
+                    onClick = { onViewLibrary(importedTrackIds) },
+                    enabled = importedTrackIds.isNotEmpty(),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(imageVector = Icons.Rounded.LibraryMusic, contentDescription = null)

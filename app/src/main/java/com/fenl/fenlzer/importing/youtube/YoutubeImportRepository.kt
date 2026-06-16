@@ -1,7 +1,10 @@
 package com.fenl.fenlzer.importing.youtube
 
+import androidx.room.withTransaction
 import com.fenl.fenlzer.common.FenlzerDispatchers
+import com.fenl.fenlzer.data.local.FenlzerDatabase
 import com.fenl.fenlzer.data.local.dao.ImportDao
+import com.fenl.fenlzer.data.local.dao.PlaylistDao
 import com.fenl.fenlzer.data.local.dao.QueueDao
 import com.fenl.fenlzer.data.local.dao.RemoteDiscoverDao
 import com.fenl.fenlzer.data.local.dao.TrackDao
@@ -43,6 +46,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonObject
 import okhttp3.ResponseBody
 import java.io.File
@@ -57,9 +61,12 @@ class YoutubeImportRepository(
     private val trackDao: TrackDao,
     private val importDao: ImportDao,
     private val remoteDiscoverDao: RemoteDiscoverDao,
+    private val playlistDao: PlaylistDao? = null,
     private val queueDao: QueueDao? = null,
     private val statsRepository: StatsRepository? = null,
+    private val database: FenlzerDatabase? = null,
     private val storage: FenlzerStorage,
+    private val thumbnailPromoter: YoutubeThumbnailPromoter = YoutubeThumbnailPromoter(storage),
     private val dispatchers: FenlzerDispatchers = FenlzerDispatchers(),
     private val now: () -> Long = { System.currentTimeMillis() },
     private val idFactory: () -> String = { UUID.randomUUID().toString() },
@@ -181,6 +188,21 @@ class YoutubeImportRepository(
         intent: ImportIntent = ImportIntent.youtubeSearch()
     ): YoutubeImportItemResult = withContext(dispatchers.io) {
         storage.ensureDirectories()
+        intent.pendingActionType?.let { pendingActionType ->
+            importDao.getActivePendingActionJob(
+                remoteItemId = result.remoteItemId,
+                pendingActionType = pendingActionType,
+                targetPlaylistId = intent.targetPlaylistId
+            )?.let { existing ->
+                return@withContext YoutubeImportItemResult(
+                    importJobId = existing.importJobId,
+                    trackId = null,
+                    displayTitle = result.title,
+                    outcome = YoutubeImportOutcome.QUEUED,
+                    message = "This action is already queued."
+                )
+            }
+        }
         val createdAt = now()
         remoteDiscoverDao.upsertRemoteItem(result.toRemoteItem(createdAt))
         val job = ImportJobEntity(
@@ -536,6 +558,8 @@ class YoutubeImportRepository(
         try {
             duplicateByStrongIdentifier(result)?.let { duplicate ->
                 val message = "Already imported as ${duplicate.displayTitle()}."
+                completeImportedTrack(job, result.remoteItemId, duplicate.trackId)
+                promoteArtworkIfNeeded(duplicate, result.thumbnailUrl)
                 updateJob(
                     status = STATUS_DUPLICATE,
                     progressPercent = 100,
@@ -543,10 +567,6 @@ class YoutubeImportRepository(
                     errorMessage = message,
                     completedAt = now()
                 )
-                markRemoteItemImported(result.remoteItemId, duplicate.trackId)
-                if (job.targetFavourite && !duplicate.isFavourite) {
-                    trackDao.setFavourite(duplicate.trackId, true, now(), now())
-                }
                 insertHistory(
                     importJobId = job.importJobId,
                     result = HISTORY_DUPLICATE,
@@ -575,11 +595,12 @@ class YoutubeImportRepository(
                         sourceUrl = result.sourceUrl,
                         remoteItemId = result.remoteItemId
                     ),
-                    jobType = JOB_TYPE_YOUTUBE_SEARCH,
+                    jobType = job.apiJobType(),
                     priorityClass = job.apiPriorityClass(),
                     preferredFormat = job.preferredFormat,
                     fallbackToBestAvailable = true,
-                    reason = job.reason ?: ImportReason.MANUAL_SINGLE
+                    reason = job.reason ?: ImportReason.MANUAL_SINGLE,
+                    target = job.apiTarget()
                 )
             ).job
 
@@ -598,7 +619,6 @@ class YoutubeImportRepository(
                 searchResult = result,
                 readyJob = readyJob,
                 importJob = job,
-                targetFavourite = job.targetFavourite,
                 updateJob = ::updateJob
             )
 
@@ -823,6 +843,8 @@ class YoutubeImportRepository(
                     }
                 }
                 val message = "Already imported as ${existingTrack.displayTitle()}."
+                completeImportedTrack(job, searchResult.remoteItemId, existingTrack.trackId)
+                promoteArtworkIfNeeded(existingTrack, searchResult.thumbnailUrl)
                 updateJob(
                     status = ApiJobState.TRANSFER_CONFIRMED,
                     progressPercent = 100,
@@ -832,10 +854,6 @@ class YoutubeImportRepository(
                     errorMessage = null,
                     completedAt = now()
                 )
-                markRemoteItemImported(searchResult.remoteItemId, existingTrack.trackId)
-                if (job.targetFavourite && !existingTrack.isFavourite) {
-                    trackDao.setFavourite(existingTrack.trackId, true, now(), now())
-                }
                 insertHistory(
                     importJobId = job.importJobId,
                     result = HISTORY_DUPLICATE,
@@ -865,11 +883,12 @@ class YoutubeImportRepository(
                             sourceUrl = searchResult.sourceUrl,
                             remoteItemId = searchResult.remoteItemId
                         ),
-                        jobType = localJob.jobType,
+                        jobType = localJob.apiJobType(),
                         priorityClass = localJob.apiPriorityClass(),
                         preferredFormat = localJob.preferredFormat,
                         fallbackToBestAvailable = true,
-                        reason = localJob.reason ?: ImportReason.MANUAL_SINGLE
+                        reason = localJob.reason ?: ImportReason.MANUAL_SINGLE,
+                        target = localJob.apiTarget()
                     ),
                     idempotencyKey = "fenlzer_resume_${localJob.importJobId}"
                 ).job.also { createdJob ->
@@ -890,6 +909,8 @@ class YoutubeImportRepository(
             if (ApiJobState.isTerminalSuccess(remoteJob.effectiveStatus()) && remoteJob.file?.available != true) {
                 val existingTrack = duplicateByStrongIdentifier(searchResult)
                 if (existingTrack != null) {
+                    completeImportedTrack(job, searchResult.remoteItemId, existingTrack.trackId)
+                    promoteArtworkIfNeeded(existingTrack, searchResult.thumbnailUrl)
                     updateJob(
                         status = ApiJobState.TRANSFER_CONFIRMED,
                         progressPercent = 100,
@@ -899,7 +920,6 @@ class YoutubeImportRepository(
                         errorMessage = null,
                         completedAt = now()
                     )
-                    markRemoteItemImported(searchResult.remoteItemId, existingTrack.trackId)
                     return YoutubeImportItemResult(
                         importJobId = job.importJobId,
                         trackId = existingTrack.trackId,
@@ -920,7 +940,6 @@ class YoutubeImportRepository(
                 searchResult = searchResult,
                 readyJob = readyJob,
                 importJob = job,
-                targetFavourite = job.targetFavourite,
                 updateJob = ::updateJob
             )
         } catch (cancellation: CancellationException) {
@@ -1047,7 +1066,6 @@ class YoutubeImportRepository(
         searchResult: YoutubeSearchResultItem,
         readyJob: JobObject,
         importJob: ImportJobEntity,
-        targetFavourite: Boolean,
         updateJob: suspend (
             status: String,
             progressPercent: Int?,
@@ -1114,6 +1132,8 @@ class YoutubeImportRepository(
                     sizeBytes = transfer.bytesCopied,
                     localTrackId = duplicate.trackId
                 )
+                completeImportedTrack(importJob, searchResult.remoteItemId, duplicate.trackId)
+                promoteArtworkIfNeeded(duplicate, searchResult.thumbnailUrl)
                 updateJob(
                     ApiJobState.TRANSFER_CONFIRMED,
                     100,
@@ -1123,10 +1143,6 @@ class YoutubeImportRepository(
                     null,
                     now()
                 )
-                markRemoteItemImported(searchResult.remoteItemId, duplicate.trackId)
-                if (targetFavourite && !duplicate.isFavourite) {
-                    trackDao.setFavourite(duplicate.trackId, true, now(), now())
-                }
                 val message = "Already imported as ${duplicate.displayTitle()}."
                 insertHistory(
                     importJobId = importJob.importJobId,
@@ -1162,6 +1178,9 @@ class YoutubeImportRepository(
             moveTempFile(tempFile, finalAudioFile)
             val importedAt = now()
             val trackId = idFactory()
+            val remoteThumbnailUrl = readyJob.metadata?.thumbnailUrl ?: searchResult.thumbnailUrl
+            val promotedThumbnail = thumbnailPromoter.download(remoteThumbnailUrl)
+                ?.canonicalThumbnail()
             val track = readyJob.toTrackEntity(
                 searchResult = searchResult,
                 importJob = importJob,
@@ -1170,13 +1189,23 @@ class YoutubeImportRepository(
                 audioHash = transfer.sha256,
                 fileSizeBytes = transfer.bytesCopied,
                 finalAudioFormat = readyJob.actualFormat ?: extension.uppercase(Locale.US),
+                thumbnailAssetId = promotedThumbnail?.asset?.thumbnailAssetId,
                 importedAt = importedAt
             )
             val originalMetadata = track.toOriginalMetadataEntity()
 
-            trackDao.insertTrackWithOriginalMetadata(track, originalMetadata)
+            try {
+                trackDao.insertTrackWithOriginalMetadataAndThumbnail(
+                    track = track,
+                    originalMetadata = originalMetadata,
+                    thumbnailAsset = promotedThumbnail?.asset
+                )
+            } catch (throwable: Throwable) {
+                promotedThumbnail?.cleanupUncommitted()
+                throw throwable
+            }
             trackInserted = true
-            markRemoteItemImported(searchResult.remoteItemId, trackId)
+            completeImportedTrack(importJob, searchResult.remoteItemId, trackId)
             confirmTransferredFile(
                 readyJob = readyJob,
                 sha256 = transfer.sha256,
@@ -1192,10 +1221,6 @@ class YoutubeImportRepository(
                 null,
                 now()
             )
-            if (targetFavourite) {
-                trackDao.setFavourite(trackId, true, importedAt, now())
-            }
-
             val displayTitle = track.displayTitle()
             insertHistory(
                 importJobId = importJob.importJobId,
@@ -1318,17 +1343,58 @@ class YoutubeImportRepository(
         )
     }
 
-    private suspend fun markRemoteItemImported(remoteItemId: String, trackId: String) {
-        val remoteItem = remoteDiscoverDao.getRemoteItem(remoteItemId) ?: return
-        remoteDiscoverDao.upsertRemoteItem(
-            remoteItem.copy(
+    private suspend fun completeImportedTrack(
+        importJob: ImportJobEntity,
+        remoteItemId: String,
+        trackId: String
+    ) {
+        val timestamp = now()
+        val completeReferences: suspend () -> Unit = {
+            remoteDiscoverDao.markImported(
+                remoteItemId = remoteItemId,
                 importState = REMOTE_IMPORT_IMPORTED,
-                importedTrackId = trackId,
-                updatedAt = now()
+                trackId = trackId,
+                updatedAt = timestamp
             )
-        )
-        queueDao?.convertRemoteItemToTrack(remoteItemId = remoteItemId, trackId = trackId)
+            queueDao?.convertRemoteItemToTrack(remoteItemId = remoteItemId, trackId = trackId)
+            if (importJob.targetFavourite) {
+                trackDao.setFavourite(trackId, true, timestamp, timestamp)
+            }
+            importJob.targetPlaylistId?.let { playlistId ->
+                playlistDao?.addTrackIfMissing(playlistId, trackId, timestamp)
+            }
+        }
+        if (database != null) {
+            database.withTransaction { completeReferences() }
+        } else {
+            completeReferences()
+        }
         statsRepository?.mergeRemoteItemIntoTrack(remoteItemId = remoteItemId, trackId = trackId)
+    }
+
+    private suspend fun promoteArtworkIfNeeded(track: TrackEntity, sourceUrl: String?) {
+        if (track.thumbnailAssetId != null || track.sourceType == ImportSourceType.LOCAL_FILE) return
+        val effectiveUrl = sourceUrl ?: track.remoteThumbnailUrl
+        val promoted = thumbnailPromoter.download(effectiveUrl)?.canonicalThumbnail() ?: return
+        try {
+            trackDao.updateTrackWithThumbnailAsset(
+                track = track.copy(
+                    thumbnailAssetId = promoted.asset.thumbnailAssetId,
+                    remoteThumbnailUrl = effectiveUrl,
+                    updatedAt = now()
+                ),
+                thumbnailAsset = promoted.asset
+            )
+        } catch (throwable: Throwable) {
+            promoted.cleanupUncommitted()
+            throw throwable
+        }
+    }
+
+    private suspend fun PromotedYoutubeThumbnail.canonicalThumbnail(): PromotedYoutubeThumbnail {
+        val contentHash = asset.contentHash ?: return this
+        val existing = trackDao.getPermanentThumbnailAssetByHash(contentHash) ?: return this
+        return copy(asset = existing, createdFile = false)
     }
 
     private suspend fun ImportJobEntity.remoteItem(): RemoteItemEntity? =
@@ -1563,6 +1629,7 @@ class YoutubeImportRepository(
         audioHash: String,
         fileSizeBytes: Long,
         finalAudioFormat: String,
+        thumbnailAssetId: String?,
         importedAt: Long
     ): TrackEntity {
         val metadataTitle = metadata?.title ?: displayTitle ?: searchResult.title
@@ -1600,7 +1667,7 @@ class YoutubeImportRepository(
             audioHash = audioHash,
             fileSizeBytes = fileSizeBytes,
             finalAudioFormat = finalAudioFormat,
-            thumbnailAssetId = null,
+            thumbnailAssetId = thumbnailAssetId,
             embeddedThumbnailAssetId = null,
             remoteThumbnailUrl = metadata?.thumbnailUrl ?: searchResult.thumbnailUrl,
             isFavourite = false,
@@ -1621,7 +1688,11 @@ class YoutubeImportRepository(
             originalYear = year,
             originalTrackNumber = trackNumber,
             originalDiscNumber = discNumber,
-            originalThumbnailKind = if (remoteThumbnailUrl != null) "YOUTUBE_REMOTE" else "NONE",
+            originalThumbnailKind = when {
+                thumbnailAssetId != null -> "YOUTUBE"
+                remoteThumbnailUrl != null -> "YOUTUBE_REMOTE"
+                else -> "NONE"
+            },
             rawMetadataJson = null
         )
 
@@ -1657,6 +1728,17 @@ class YoutubeImportRepository(
     private fun ImportJobEntity.apiPriorityClass(): String =
         if (priorityClass == ImportPriorityClass.AUTO) ApiPriorityClass.AUTO else ApiPriorityClass.MANUAL
 
+    private fun ImportJobEntity.apiJobType(): String = when (sourceType) {
+        ImportSourceType.DISCOVER_AUTO_FAVOURITE -> JOB_TYPE_DISCOVER_AUTO_FAVOURITE
+        ImportSourceType.DISCOVER_AUTO_PLAYLIST -> JOB_TYPE_DISCOVER_AUTO_PLAYLIST
+        else -> jobType
+    }
+
+    private fun ImportJobEntity.apiTarget() = buildJsonObject {
+        put("favouriteAfterImport", JsonPrimitive(targetFavourite))
+        put("playlistIdAfterImport", targetPlaylistId?.let(::JsonPrimitive) ?: JsonNull)
+    }
+
     private fun okhttp3.Headers.contentDispositionFilename(): String? {
         val disposition = this["Content-Disposition"] ?: return null
         return Regex("""filename="?([^";]+)"?""")
@@ -1673,6 +1755,8 @@ class YoutubeImportRepository(
     companion object {
         const val JOB_TYPE_YOUTUBE_SEARCH = "YOUTUBE_SEARCH"
         private const val JOB_TYPE_YOUTUBE_PLAYLIST_ITEM = "YOUTUBE_PLAYLIST_ITEM"
+        private const val JOB_TYPE_DISCOVER_AUTO_FAVOURITE = "DISCOVER_AUTO_FAVOURITE"
+        private const val JOB_TYPE_DISCOVER_AUTO_PLAYLIST = "DISCOVER_AUTO_PLAYLIST"
         private const val PRIORITY_MANUAL = 1_000
         private const val PRIORITY_AUTO = 0
         private const val STATUS_QUEUED = "QUEUED"

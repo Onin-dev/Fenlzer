@@ -94,6 +94,39 @@ interface ImportDao {
 
     @Query(
         """
+        SELECT * FROM import_jobs
+        WHERE remoteItemId = :remoteItemId
+          AND pendingActionType = :pendingActionType
+          AND ((:targetPlaylistId IS NULL AND targetPlaylistId IS NULL) OR targetPlaylistId = :targetPlaylistId)
+          AND status IN (
+              'QUEUED', 'DOWNLOADING_METADATA', 'DOWNLOADING', 'POST_PROCESSING',
+              'PROCESSING', 'RUNNING', 'READY_FOR_TRANSFER', 'COPYING',
+              'EXTRACTING_METADATA', 'NEEDS_ATTENTION'
+          )
+        ORDER BY createdAt DESC
+        LIMIT 1
+        """
+    )
+    suspend fun getActivePendingActionJob(
+        remoteItemId: String,
+        pendingActionType: String,
+        targetPlaylistId: String?
+    ): ImportJobEntity?
+
+    @Query("SELECT * FROM import_jobs WHERE importJobId IN (:importJobIds)")
+    fun observeJobs(importJobIds: List<String>): Flow<List<ImportJobEntity>>
+
+    @Query(
+        """
+        SELECT * FROM import_history_entries
+        WHERE importJobId IN (:importJobIds)
+        ORDER BY createdAt ASC
+        """
+    )
+    fun observeHistoryForJobs(importJobIds: List<String>): Flow<List<ImportHistoryEntryEntity>>
+
+    @Query(
+        """
         UPDATE import_jobs
         SET attemptCount = attemptCount + 1,
             updatedAt = :updatedAt

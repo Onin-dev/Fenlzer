@@ -87,6 +87,7 @@ data class TrackStatsSnapshotEntity(
     val totalListenedMs: Long,
     val firstPlayedAt: Long? = null,
     val lastPlayedAt: Long? = null,
+    val completionSampleCount: Int = 0,
     val averageCompletionPercent: Float
 )
 
@@ -122,5 +123,6 @@ data class PlaybackProgressRecoveryEntity(
     val listenedMs: Long,
     val durationMsAtPlayback: Long,
     val lastPositionMs: Long,
-    val sourceContext: String
+    val sourceContext: String,
+    val privateMode: Boolean = false
 )

@@ -18,7 +18,6 @@ import com.fenl.fenlzer.data.remote.CreateHistoryUploadRequest
 import com.fenl.fenlzer.data.remote.DiscoverItem
 import com.fenl.fenlzer.data.remote.DiscoverRefreshData
 import com.fenl.fenlzer.data.remote.DiscoverRefreshRequest
-import com.fenl.fenlzer.data.remote.FenlzerApiFactory
 import com.fenl.fenlzer.importing.youtube.YoutubeImportCoordinator
 import com.fenl.fenlzer.importing.youtube.YoutubeImportItemResult
 import com.fenl.fenlzer.importing.ImportIntent
@@ -26,18 +25,18 @@ import com.fenl.fenlzer.importing.youtube.YoutubeSearchResultItem
 import com.fenl.fenlzer.playback.RemoteStreamResolver
 import com.fenl.fenlzer.playback.RemoteStreamResolver.Companion.STREAM_REMOTE_ONLY
 import com.fenl.fenlzer.playback.RemoteStreamResolver.Companion.STREAM_READY
-import com.github.luben.zstd.Zstd
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
-import java.security.MessageDigest
 import java.time.Instant
 import java.util.UUID
 
@@ -50,9 +49,12 @@ class DiscoverRepository(
     private val streamResolver: RemoteStreamResolver,
     private val youtubeImportCoordinator: YoutubeImportCoordinator,
     private val dispatchers: FenlzerDispatchers = FenlzerDispatchers(),
+    private val historyUploadEncoder: DiscoverHistoryUploadEncoder = DiscoverHistoryUploadEncoder(),
     private val now: () -> Long = { System.currentTimeMillis() },
     private val idFactory: () -> String = { UUID.randomUUID().toString() }
 ) {
+    private val refreshMutex = Mutex()
+
     fun observeDiscover(): Flow<DiscoverUiState> {
         return combine(
             remoteDiscoverDao.observeLatestDiscoverSnapshot(),
@@ -75,6 +77,29 @@ class DiscoverRepository(
     }
 
     suspend fun refresh(broader: Boolean = false): DiscoverRefreshSummary = withContext(dispatchers.io) {
+        refreshMutex.withLock {
+            performRefresh(broader)
+        }
+    }
+
+    suspend fun refreshAtStartupIfEligible(): Boolean = withContext(dispatchers.io) {
+        refreshMutex.withLock {
+            val snapshot = remoteDiscoverDao.getLatestDiscoverSnapshot()
+            if (!DiscoverRefreshPolicy.isStartupRefreshEligible(snapshot, now())) {
+                return@withLock false
+            }
+            try {
+                performRefresh(broader = false)
+                true
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                false
+            }
+        }
+    }
+
+    private suspend fun performRefresh(broader: Boolean): DiscoverRefreshSummary {
         val tracks = trackDao.getTracksByRecentlyAdded()
         val events = playbackDao.getNonPrivatePlaybackEvents()
         val historyUploadId = uploadHistory(events = events, tracks = tracks)
@@ -94,7 +119,7 @@ class DiscoverRepository(
             apiRepository.refreshDiscover(request)
         }
         persistRefresh(response, tracks)
-        DiscoverRefreshSummary(
+        return DiscoverRefreshSummary(
             itemCount = response.items.count { !it.alreadyImported },
             broaderAvailable = response.refreshBroaderAvailable || response.finalDisplayedCount < 5,
             refreshType = response.refreshType
@@ -146,6 +171,18 @@ class DiscoverRepository(
             ).await()
         }
 
+    suspend fun importRemoteToPlaylist(
+        remoteItemId: String,
+        playlistId: String
+    ): YoutubeImportItemResult = withContext(dispatchers.io) {
+        val remoteItem = remoteDiscoverDao.getRemoteItem(remoteItemId)
+            ?: throw IllegalArgumentException("Remote item no longer exists.")
+        youtubeImportCoordinator.importSearchResult(
+            result = remoteItem.toYoutubeSearchResult(),
+            intent = ImportIntent.discoverAutoPlaylist(playlistId)
+        ).await()
+    }
+
     private suspend fun prefetchRows(rows: List<DiscoverRemoteItemRow>, currentRemoteItemId: String) {
         val currentIndex = rows.indexOfFirst { it.remoteItemId == currentRemoteItemId }
         if (currentIndex == -1) return
@@ -165,41 +202,46 @@ class DiscoverRepository(
         tracks: List<TrackEntity>
     ): String {
         val tracksById = tracks.associateBy { it.trackId }
-        val chunkJson = buildJsonObject {
-            put("schemaVersion", JsonPrimitive(1))
-            put("chunkIndex", JsonPrimitive(0))
-            put("chunkCount", JsonPrimitive(1))
-            put(
-                "events",
-                buildJsonArray {
-                    events.forEach { event -> add(event.toDiscoverJson(tracksById[event.trackId])) }
-                }
-            )
-        }
-        val rawBytes = FenlzerApiFactory.json.encodeToString(JsonObject.serializer(), chunkJson)
-            .toByteArray()
-        val compressed = Zstd.compress(rawBytes)
+        val eventPayloads = events.map { event -> event.toDiscoverJson(tracksById[event.trackId]) }
+        val estimatedPayload = historyUploadEncoder.encode(eventPayloads)
         val upload = apiRepository.createHistoryUpload(
             CreateHistoryUploadRequest(
                 clientUploadId = "hist_${idFactory()}",
                 compression = "zstd",
                 estimatedEventCount = events.size,
-                estimatedCompressedChunkCount = 1,
-                schemaVersion = 1,
+                estimatedCompressedChunkCount = estimatedPayload.chunks.size,
+                schemaVersion = DiscoverHistoryUploadEncoder.SCHEMA_VERSION,
                 excludedPrivateModeEvents = true
             )
         )
-        apiRepository.uploadHistoryChunk(
-            uploadId = upload.uploadId,
-            chunkIndex = 0,
-            chunkCount = 1,
-            compressedBody = compressed
-        )
+        val payload = if (
+            upload.targetChunkSizeBytes == DiscoverHistoryUploadEncoder.DEFAULT_TARGET_CHUNK_SIZE_BYTES
+        ) {
+            estimatedPayload
+        } else {
+            historyUploadEncoder.encode(
+                events = eventPayloads,
+                targetCompressedChunkSizeBytes = upload.targetChunkSizeBytes
+            )
+        }
+        payload.chunks.forEach { chunk ->
+            val response = apiRepository.uploadHistoryChunk(
+                uploadId = upload.uploadId,
+                chunkIndex = chunk.index,
+                chunkCount = chunk.count,
+                compressedBody = chunk.compressedBytes
+            )
+            check(response.accepted) { "History upload chunk ${chunk.index} was rejected." }
+            check(response.chunkIndex == chunk.index) { "History upload chunk order was not preserved." }
+            check(response.chunkSha256.equals(chunk.sha256, ignoreCase = true)) {
+                "History upload chunk ${chunk.index} failed SHA-256 verification."
+            }
+        }
         apiRepository.completeHistoryUpload(
             uploadId = upload.uploadId,
             request = CompleteUploadRequest(
-                chunkCount = 1,
-                overallSha256 = compressed.sha256(),
+                chunkCount = payload.chunks.size,
+                overallSha256 = payload.overallSha256,
                 totalEventCount = events.size
             )
         )
@@ -216,10 +258,11 @@ class DiscoverRepository(
             .filterNot { it.sourceUrl != null && it.sourceUrl in importedUrls }
             .filterNot { it.isLive || it.isUnavailable }
             .take(25)
+        val generatedAt = parseInstant(response.generatedAt) ?: createdAt
         val snapshot = DiscoverSnapshotEntity(
             snapshotId = response.snapshotId,
-            generatedAt = parseInstant(response.generatedAt) ?: createdAt,
-            lastOpenedAt = createdAt,
+            generatedAt = generatedAt,
+            lastOpenedAt = generatedAt,
             refreshType = response.refreshType,
             candidateRequestTarget = response.candidateRequestTarget,
             finalDisplayedCount = validItems.size,
@@ -338,10 +381,6 @@ class DiscoverRepository(
     private fun parseInstant(value: String): Long? =
         runCatching { Instant.parse(value).toEpochMilli() }.getOrNull()
 
-    private fun ByteArray.sha256(): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(this)
-        return digest.joinToString("") { "%02x".format(it) }
-    }
 }
 
 data class DiscoverUiState(

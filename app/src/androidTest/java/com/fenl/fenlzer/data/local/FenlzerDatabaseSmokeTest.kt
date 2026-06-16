@@ -163,6 +163,19 @@ class FenlzerDatabaseSmokeTest {
     }
 
     @Test
+    fun pendingPlaylistCompletionAddsTrackExactlyOnce() = runTest {
+        database.trackDao().insertTrack(track())
+        database.playlistDao().upsertPlaylist(playlist())
+
+        assertTrue(database.playlistDao().addTrackIfMissing("playlist-1", "track-1", 10L))
+        assertFalse(database.playlistDao().addTrackIfMissing("playlist-1", "track-1", 20L))
+
+        val items = database.playlistDao().getPlaylistTracks("playlist-1")
+        assertEquals(1, items.size)
+        assertEquals("track-1", items.single().trackId)
+    }
+
+    @Test
     fun queuedTrackReferenceMarksQueueModifiedWhenPlaylistMembershipChanges() = runTest {
         database.trackDao().insertTrack(track(trackId = "track-1", audioHash = "hash-1"))
         database.trackDao().insertTrack(track(trackId = "track-2", audioHash = "hash-2"))
