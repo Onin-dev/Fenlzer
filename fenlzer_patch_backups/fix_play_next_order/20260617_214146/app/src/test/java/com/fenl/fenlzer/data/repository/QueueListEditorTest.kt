@@ -7,7 +7,7 @@ import org.junit.Test
 
 class QueueListEditorTest {
     @Test
-    fun playNextMovesDuplicateImmediatelyAfterCurrent() {
+    fun playNextMovesDuplicateAfterExistingPlayNextItems() {
         val current = item("current", "track-1", 0, QueueListEditor.STATE_CURRENT, "TAP")
         val firstPlayNext = item("play-next", "track-2", 1, QueueListEditor.STATE_UPCOMING, "PLAY_NEXT")
         val duplicate = item("old-duplicate", "track-3", 2, QueueListEditor.STATE_UPCOMING, "ADD_TO_QUEUE")
@@ -21,11 +21,11 @@ class QueueListEditorTest {
         )
 
         assertEquals(
-            listOf("track-1", "track-3", "track-2", "track-4"),
+            listOf("track-1", "track-2", "track-3", "track-4"),
             edited.items.mapNotNull { it.trackId }
         )
-        assertEquals("new-duplicate", edited.items[1].queueItemId)
-        assertEquals(QueueListEditor.INSERTED_BY_PLAY_NEXT, edited.items[1].insertedBy)
+        assertEquals("new-duplicate", edited.items[2].queueItemId)
+        assertEquals(QueueListEditor.INSERTED_BY_PLAY_NEXT, edited.items[2].insertedBy)
     }
 
     @Test

@@ -123,11 +123,6 @@ import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 import com.fenl.fenlzer.ui.components.DragStepHandle
-import com.fenl.fenlzer.ui.components.NowPlayingArtworkOverlay
-import com.fenl.fenlzer.ui.components.NowPlayingStatusBadge
-import com.fenl.fenlzer.ui.components.nowPlayingContentColor
-import com.fenl.fenlzer.ui.components.nowPlayingRowColor
-import com.fenl.fenlzer.ui.components.nowPlayingSecondaryContentColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.zIndex
@@ -173,8 +168,6 @@ fun PlaylistsScreen(
     onToggleFavourite: (String, Boolean) -> Unit,
     onAddToPlaylist: (String, String) -> Unit,
     onAddTracksToPlaylist: (List<String>, String) -> Unit,
-    currentTrackId: String? = null,
-    currentTrackIsPlaying: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var showCreateDialog by rememberSaveable { mutableStateOf(false) }
@@ -212,8 +205,6 @@ fun PlaylistsScreen(
             onToggleFavourite = onToggleFavourite,
             onAddToPlaylist = onAddToPlaylist,
             onAddTracksToPlaylist = onAddTracksToPlaylist,
-            currentTrackId = currentTrackId,
-            currentTrackIsPlaying = currentTrackIsPlaying,
             modifier = modifier
         )
 
@@ -233,8 +224,6 @@ fun PlaylistsScreen(
                 onToggleFavourite = onToggleFavourite,
                 onAddToPlaylist = onAddToPlaylist,
                 onAddTracksToPlaylist = onAddTracksToPlaylist,
-                currentTrackId = currentTrackId,
-                currentTrackIsPlaying = currentTrackIsPlaying,
                 modifier = modifier
             )
         }
@@ -436,8 +425,6 @@ private fun RegularPlaylistDetailView(
     onToggleFavourite: (String, Boolean) -> Unit,
     onAddToPlaylist: (String, String) -> Unit,
     onAddTracksToPlaylist: (List<String>, String) -> Unit,
-    currentTrackId: String? = null,
-    currentTrackIsPlaying: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var searchQuery by rememberSaveable(playlist.playlistId) { mutableStateOf("") }
@@ -644,8 +631,6 @@ private fun RegularPlaylistDetailView(
                 canReorder = canReorder,
                 reorderMode = reorderHandlesVisible,
                 sourceTracks = playlist.tracks,
-                currentTrackId = currentTrackId,
-                currentTrackIsPlaying = currentTrackIsPlaying,
             selectedTrackIds = selectedTrackIds,
             selectionMode = selectionMode,
             onToggleSelection = { trackId ->
@@ -748,8 +733,6 @@ private fun SmartPlaylistDetailView(
     onToggleFavourite: (String, Boolean) -> Unit,
     onAddToPlaylist: (String, String) -> Unit,
     onAddTracksToPlaylist: (List<String>, String) -> Unit,
-    currentTrackId: String? = null,
-    currentTrackIsPlaying: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var searchQuery by rememberSaveable(playlist.smartPlaylistId) { mutableStateOf("") }
@@ -883,8 +866,6 @@ private fun SmartPlaylistDetailView(
                 canReorder = false,
                 reorderMode = false,
                 sourceTracks = playlist.tracks,
-                currentTrackId = currentTrackId,
-                currentTrackIsPlaying = currentTrackIsPlaying,
             selectedTrackIds = selectedTrackIds,
             selectionMode = selectionMode,
             onToggleSelection = { trackId ->
@@ -1300,8 +1281,6 @@ private fun PlaylistTrackList(
     canReorder: Boolean,
     reorderMode: Boolean,
     sourceTracks: List<PlaylistTrackItem>,
-    currentTrackId: String? = null,
-    currentTrackIsPlaying: Boolean = false,
     selectedTrackIds: Set<String> = emptySet(),
     selectionMode: Boolean = false,
     onToggleSelection: (String) -> Unit = {},
@@ -1444,8 +1423,6 @@ private fun PlaylistTrackList(
                 isPlaylistDragActive = draggingTrackId != null,
                 isDragging = isDragging,
                 isSelected = isSelected,
-                isNowPlaying = track.trackId == currentTrackId,
-                currentTrackIsPlaying = currentTrackIsPlaying,
                 dragOffsetPx = visualPlaylistRowOffsetPx(
                     index = index,
                     isDragging = isDragging,
@@ -1492,8 +1469,6 @@ private fun PlaylistTrackRow(
     isPlaylistDragActive: Boolean,
     isDragging: Boolean,
     isSelected: Boolean,
-    isNowPlaying: Boolean = false,
-    currentTrackIsPlaying: Boolean = false,
     dragOffsetPx: Float,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
@@ -1513,10 +1488,11 @@ private fun PlaylistTrackRow(
     onMeasuredHeight: (Int) -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    val rowContainerColor = nowPlayingRowColor(
-        isNowPlaying = isNowPlaying,
-        isSelected = isSelected
-    )
+    val rowContainerColor = if (isSelected) {
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.70f)
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
     Box(
         modifier = Modifier
             .zIndex(if (isDragging) 10f else 0f)
@@ -1541,39 +1517,26 @@ private fun PlaylistTrackRow(
                 Text(
                     text = track.displayTitle,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    fontWeight = if (isNowPlaying) FontWeight.SemiBold else FontWeight.Normal,
-                    color = nowPlayingContentColor(isNowPlaying)
+                    overflow = TextOverflow.Ellipsis
                 )
             },
             supportingContent = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = track.artist.ifBlank { "Unknown artist" },
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = nowPlayingSecondaryContentColor(isNowPlaying),
-                        modifier = Modifier.weight(1f)
-                    )
-                    if (isNowPlaying) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        NowPlayingStatusBadge(isPlaying = currentTrackIsPlaying)
-                    }
-                }
+                Text(
+                    text = track.artist.ifBlank { "Unknown artist" },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             },
             leadingContent = {
-                TrackArtwork(
-                    thumbnailUri = track.thumbnailUri,
-                    isNowPlaying = isNowPlaying,
-                    currentTrackIsPlaying = currentTrackIsPlaying
-                )
+                TrackArtwork(thumbnailUri = track.thumbnailUri)
             },
             trailingContent = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = track.durationMs.formatDuration(),
                         style = MaterialTheme.typography.labelMedium,
-                        color = nowPlayingSecondaryContentColor(isNowPlaying)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     if (canReorder) {
                         DragStepHandle(
@@ -1898,11 +1861,7 @@ private fun CoverCell(uri: Uri?, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun TrackArtwork(
-    thumbnailUri: Uri?,
-    isNowPlaying: Boolean = false,
-    currentTrackIsPlaying: Boolean = false
-) {
+private fun TrackArtwork(thumbnailUri: Uri?) {
     Box(
         modifier = Modifier
             .size(48.dp)
@@ -1922,12 +1881,6 @@ private fun TrackArtwork(
                 imageVector = Icons.Rounded.MusicNote,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        if (isNowPlaying) {
-            NowPlayingArtworkOverlay(
-                isPlaying = currentTrackIsPlaying,
-                modifier = Modifier.align(Alignment.BottomEnd)
             )
         }
     }

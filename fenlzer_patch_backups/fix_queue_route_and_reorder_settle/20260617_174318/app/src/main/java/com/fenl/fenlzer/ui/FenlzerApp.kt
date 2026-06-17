@@ -450,20 +450,13 @@ private fun FenlzerScaffold(
     }
 
     fun openQueue() {
-        if (isLandscape) {
+        if (isLandscape || playerOverlayVisible || currentRoute == FenlzerRoute.Player.route) {
+            // When the queue is requested from the fullscreen player, keep the
+            // player open and show the queue above it instead of navigating to
+            // the queue tab behind the fullscreen overlay.
             showQueuePanel = true
         } else {
-            // Use the same real Queue navigation route as the mini-player menu.
-            // If the fullscreen player overlay stays visible, that route is
-            // present but hidden behind the player, which feels like a different
-            // queue. Dismiss the overlay first, then navigate to Queue.
-            showQueuePanel = false
-            playerOverlayManualProgress = null
-            playerOverlayExpanded = false
-            playerOverlayVisible = false
-            navController.navigate(FenlzerRoute.Queue.route) {
-                launchSingleTop = true
-            }
+            navController.navigate(FenlzerRoute.Queue.route)
         }
     }
 
@@ -1042,10 +1035,6 @@ private fun FenlzerNavHost(
         ?.collectAsStateWithLifecycle(initialValue = null)
         ?: remember { mutableStateOf(null) }
 
-    val currentLocalTrackId = playbackState.currentItem?.localTrackId
-    val currentRemoteItemId = playbackState.currentItem?.remoteItemId
-    val currentTrackIsPlaying = playbackState.isPlaying
-
     fun refreshStorageUsage() {
         val repository = appGraph.storageUsageRepository ?: return
         coroutineScope.launch {
@@ -1279,9 +1268,7 @@ private fun FenlzerNavHost(
                 onDeleteTracks = ::requestDeleteTracks,
                 defaultHomeSort = appSettings.defaultHomeSort,
                 highlightedTrackIds = homeHighlightTrackIds.toSet(),
-                highlightRequestId = homeHighlightRequestId,
-                currentTrackId = currentLocalTrackId,
-                currentTrackIsPlaying = currentTrackIsPlaying
+                highlightRequestId = homeHighlightRequestId
             )
         }
         composable(FenlzerRoute.Playlists.route) {
@@ -1315,9 +1302,7 @@ private fun FenlzerNavHost(
                         onAddToQueue = ::addDiscoverItemToQueue,
                         onAddToPlaylist = onAddRemoteToPlaylist,
                         onImport = { remoteItemId -> importDiscoverItem(remoteItemId, favourite = false) },
-                        onFavourite = { remoteItemId -> importDiscoverItem(remoteItemId, favourite = true) },
-                        currentRemoteItemId = currentRemoteItemId,
-                        currentTrackIsPlaying = currentTrackIsPlaying
+                        onFavourite = { remoteItemId -> importDiscoverItem(remoteItemId, favourite = true) }
                     )
                 },
                 libraryTracks = libraryTracks,
@@ -1420,9 +1405,7 @@ private fun FenlzerNavHost(
                     }
                 },
                 onAddToPlaylist = onAddToPlaylist,
-                onAddTracksToPlaylist = onAddBatchToPlaylist,
-                currentTrackId = currentLocalTrackId,
-                currentTrackIsPlaying = currentTrackIsPlaying
+                onAddTracksToPlaylist = onAddBatchToPlaylist
             )
         }
         composable(FenlzerRoute.Import.route) {
@@ -1475,8 +1458,6 @@ private fun FenlzerNavHost(
                 onOpenSongDetails = onOpenSongDetails,
                 onClearResult = localImportViewModel::clearResult,
                 onClearYoutubeResult = youtubeImportViewModel::clearLastImportResult,
-                currentRemoteItemId = currentRemoteItemId,
-                currentTrackIsPlaying = currentTrackIsPlaying,
                 activeImportsRequestId = activeImportsRequestId
             )
         }

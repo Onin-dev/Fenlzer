@@ -453,17 +453,7 @@ private fun FenlzerScaffold(
         if (isLandscape) {
             showQueuePanel = true
         } else {
-            // Use the same real Queue navigation route as the mini-player menu.
-            // If the fullscreen player overlay stays visible, that route is
-            // present but hidden behind the player, which feels like a different
-            // queue. Dismiss the overlay first, then navigate to Queue.
-            showQueuePanel = false
-            playerOverlayManualProgress = null
-            playerOverlayExpanded = false
-            playerOverlayVisible = false
-            navController.navigate(FenlzerRoute.Queue.route) {
-                launchSingleTop = true
-            }
+            navController.navigate(FenlzerRoute.Queue.route)
         }
     }
 
@@ -480,15 +470,11 @@ private fun FenlzerScaffold(
     }
 
     fun closeQueue() {
-        if (showQueuePanel || isLandscape) {
+        if (isLandscape) {
             showQueuePanel = false
         } else {
             navController.popBackStack()
         }
-    }
-
-    BackHandler(enabled = showQueuePanel) {
-        showQueuePanel = false
     }
 
     addToPlaylistTarget?.let { target ->
@@ -739,6 +725,46 @@ private fun FenlzerScaffold(
                     activeImportsRequestId = activeImportsRequestId
                 )
 
+                if (showQueuePanel) {
+                    QueueScreen(
+                        playbackState = playbackState,
+                        onBack = { showQueuePanel = false },
+                        onRemoveItem = { queueItemId ->
+                            appGraph.playbackController?.removeQueueItem(queueItemId)
+                        },
+                        onJumpToItem = { queueItemId ->
+                            appGraph.playbackController?.jumpToQueueItem(queueItemId)
+                        },
+                        onClearUpcoming = {
+                            appGraph.playbackController?.clearUpcoming()
+                        },
+                        isPanel = true,
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .fillMaxHeight()
+                            .widthIn(min = 360.dp, max = 440.dp)
+                    ,
+                        onMoveItem = { queueItemId, offset ->
+                            appGraph.playbackController?.moveQueueItem(queueItemId, offset)
+                        },
+                        onShuffleQueue = {
+                            appGraph.playbackController?.shuffleQueue()
+                        },
+                        onShuffleUpcoming = {
+                            appGraph.playbackController?.shuffleUpcoming()
+                        },
+                        onSaveQueueAsPlaylist = { name ->
+                            coroutineScope.launch {
+                                val trackIds = playbackState.queueItems
+                                    .filterNot { it.isRemote }
+                                    .mapNotNull { it.localTrackId ?: it.trackId }
+                                    .distinct()
+                                if (trackIds.isNotEmpty()) {
+                                    appGraph.playlistRepository?.saveStaticPlaylist(name, trackIds)
+                                }
+                            }
+                        })
+                }
             }
         }
 
@@ -802,56 +828,6 @@ private fun FenlzerScaffold(
                     val currentProgress = playerOverlayManualProgress ?: 1f
                     playerOverlayManualProgress = null
                     playerOverlayExpanded = !(shouldCollapse || currentProgress <= 0.55f)
-                }
-            )
-        }
-
-        if (showQueuePanel) {
-            QueueScreen(
-                playbackState = playbackState,
-                onBack = { showQueuePanel = false },
-                onRemoveItem = { queueItemId ->
-                    appGraph.playbackController?.removeQueueItem(queueItemId)
-                },
-                onJumpToItem = { queueItemId ->
-                    appGraph.playbackController?.jumpToQueueItem(queueItemId)
-                },
-                onClearUpcoming = {
-                    appGraph.playbackController?.clearUpcoming()
-                },
-                // Portrait fullscreen-player queue should be the same full Queue
-                // screen opened from the mini-player menu. Only landscape keeps
-                // the compact side-panel presentation.
-                isPanel = isLandscape,
-                modifier = if (isLandscape) {
-                    Modifier
-                        .align(Alignment.CenterEnd)
-                        .fillMaxHeight()
-                        .widthIn(min = 360.dp, max = 440.dp)
-                } else {
-                    Modifier
-                        .align(Alignment.Center)
-                        .fillMaxSize()
-                },
-                onMoveItem = { queueItemId, offset ->
-                    appGraph.playbackController?.moveQueueItem(queueItemId, offset)
-                },
-                onShuffleQueue = {
-                    appGraph.playbackController?.shuffleQueue()
-                },
-                onShuffleUpcoming = {
-                    appGraph.playbackController?.shuffleUpcoming()
-                },
-                onSaveQueueAsPlaylist = { name ->
-                    coroutineScope.launch {
-                        val trackIds = playbackState.queueItems
-                            .filterNot { it.isRemote }
-                            .mapNotNull { it.localTrackId ?: it.trackId }
-                            .distinct()
-                        if (trackIds.isNotEmpty()) {
-                            appGraph.playlistRepository?.saveStaticPlaylist(name, trackIds)
-                        }
-                    }
                 }
             )
         }
@@ -1041,10 +1017,6 @@ private fun FenlzerNavHost(
     val selectedAlbum by selectedAlbumFlow
         ?.collectAsStateWithLifecycle(initialValue = null)
         ?: remember { mutableStateOf(null) }
-
-    val currentLocalTrackId = playbackState.currentItem?.localTrackId
-    val currentRemoteItemId = playbackState.currentItem?.remoteItemId
-    val currentTrackIsPlaying = playbackState.isPlaying
 
     fun refreshStorageUsage() {
         val repository = appGraph.storageUsageRepository ?: return
@@ -1279,9 +1251,7 @@ private fun FenlzerNavHost(
                 onDeleteTracks = ::requestDeleteTracks,
                 defaultHomeSort = appSettings.defaultHomeSort,
                 highlightedTrackIds = homeHighlightTrackIds.toSet(),
-                highlightRequestId = homeHighlightRequestId,
-                currentTrackId = currentLocalTrackId,
-                currentTrackIsPlaying = currentTrackIsPlaying
+                highlightRequestId = homeHighlightRequestId
             )
         }
         composable(FenlzerRoute.Playlists.route) {
@@ -1315,9 +1285,7 @@ private fun FenlzerNavHost(
                         onAddToQueue = ::addDiscoverItemToQueue,
                         onAddToPlaylist = onAddRemoteToPlaylist,
                         onImport = { remoteItemId -> importDiscoverItem(remoteItemId, favourite = false) },
-                        onFavourite = { remoteItemId -> importDiscoverItem(remoteItemId, favourite = true) },
-                        currentRemoteItemId = currentRemoteItemId,
-                        currentTrackIsPlaying = currentTrackIsPlaying
+                        onFavourite = { remoteItemId -> importDiscoverItem(remoteItemId, favourite = true) }
                     )
                 },
                 libraryTracks = libraryTracks,
@@ -1420,9 +1388,7 @@ private fun FenlzerNavHost(
                     }
                 },
                 onAddToPlaylist = onAddToPlaylist,
-                onAddTracksToPlaylist = onAddBatchToPlaylist,
-                currentTrackId = currentLocalTrackId,
-                currentTrackIsPlaying = currentTrackIsPlaying
+                onAddTracksToPlaylist = onAddBatchToPlaylist
             )
         }
         composable(FenlzerRoute.Import.route) {
@@ -1475,8 +1441,6 @@ private fun FenlzerNavHost(
                 onOpenSongDetails = onOpenSongDetails,
                 onClearResult = localImportViewModel::clearResult,
                 onClearYoutubeResult = youtubeImportViewModel::clearLastImportResult,
-                currentRemoteItemId = currentRemoteItemId,
-                currentTrackIsPlaying = currentTrackIsPlaying,
                 activeImportsRequestId = activeImportsRequestId
             )
         }

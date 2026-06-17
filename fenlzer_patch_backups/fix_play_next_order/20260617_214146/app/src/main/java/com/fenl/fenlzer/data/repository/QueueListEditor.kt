@@ -62,10 +62,11 @@ object QueueListEditor {
 
         val withoutDuplicate = sorted.filterNot { it.sameMediaAs(newItem) }
         val currentIndex = withoutDuplicate.indexOfFirst { it.queueItemId == current.queueItemId }
-        // Play next must mean the next media item that playback will reach.
-        // Older PLAY_NEXT items stay queued, but the newest explicit action wins
-        // the immediate-next slot.
-        val insertionIndex = (currentIndex + 1).coerceIn(0, withoutDuplicate.size)
+        val playNextCount = withoutDuplicate
+            .drop(currentIndex + 1)
+            .takeWhile { it.insertedBy == INSERTED_BY_PLAY_NEXT && it.state == STATE_UPCOMING }
+            .size
+        val insertionIndex = currentIndex + 1 + playNextCount
         val edited = withoutDuplicate
             .toMutableList()
             .apply {

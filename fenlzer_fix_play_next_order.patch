@@ -1,0 +1,170 @@
+--- a/app/src/main/java/com/fenl/fenlzer/data/repository/QueueListEditor.kt
++++ b/app/src/main/java/com/fenl/fenlzer/data/repository/QueueListEditor.kt
+@@ -62,11 +62,10 @@
+ 
+         val withoutDuplicate = sorted.filterNot { it.sameMediaAs(newItem) }
+         val currentIndex = withoutDuplicate.indexOfFirst { it.queueItemId == current.queueItemId }
+-        val playNextCount = withoutDuplicate
+-            .drop(currentIndex + 1)
+-            .takeWhile { it.insertedBy == INSERTED_BY_PLAY_NEXT && it.state == STATE_UPCOMING }
+-            .size
+-        val insertionIndex = currentIndex + 1 + playNextCount
++        // Play next must mean the next media item that playback will reach.
++        // Older PLAY_NEXT items stay queued, but the newest explicit action wins
++        // the immediate-next slot.
++        val insertionIndex = (currentIndex + 1).coerceIn(0, withoutDuplicate.size)
+         val edited = withoutDuplicate
+             .toMutableList()
+             .apply {
+--- a/app/src/main/java/com/fenl/fenlzer/data/repository/QueueRepository.kt
++++ b/app/src/main/java/com/fenl/fenlzer/data/repository/QueueRepository.kt
+@@ -68,18 +68,28 @@
+         replaceQueue(updatedState, edited.items, edited.message)
+     }
+ 
+-    suspend fun playNext(trackId: String): QueueCommandResult = withContext(dispatchers.io) {
+-        val state = queueDao.getQueueState() ?: defaultQueueState()
++    suspend fun playNext(
++        trackId: String,
++        currentQueueItemIdOverride: String? = null
++    ): QueueCommandResult = withContext(dispatchers.io) {
++        val state = queueDao.getQueueState() ?: defaultQueueState()
++        val existingItems = queueDao.getQueueItems()
++        val effectiveCurrentQueueItemId = currentQueueItemIdOverride
++            ?.takeIf { id -> existingItems.any { item -> item.queueItemId == id } }
++            ?: state.currentQueueItemId
+         val edited = QueueListEditor.playNext(
+-            existingItems = queueDao.getQueueItems(),
+-            currentQueueItemId = state.currentQueueItemId,
++            existingItems = existingItems,
++            currentQueueItemId = effectiveCurrentQueueItemId,
+             newItem = newQueueItem(trackId, insertedBy = QueueListEditor.INSERTED_BY_PLAY_NEXT)
+         )
+         val updatedState = state.markModified(edited)
+         replaceQueue(updatedState, edited.items, edited.message)
+     }
+ 
+-    suspend fun playNext(trackIds: List<String>): QueueCommandResult = withContext(dispatchers.io) {
++    suspend fun playNext(
++        trackIds: List<String>,
++        currentQueueItemIdOverride: String? = null
++    ): QueueCommandResult = withContext(dispatchers.io) {
+         val uniqueTrackIds = trackIds.filter { it.isNotBlank() }.distinct()
+         if (uniqueTrackIds.isEmpty()) {
+             return@withContext replaceQueue(
+@@ -89,10 +99,14 @@
+             )
+         }
+         val state = queueDao.getQueueState() ?: defaultQueueState()
+-        val edited = uniqueTrackIds.fold(
++        val existingItems = queueDao.getQueueItems()
++        val effectiveCurrentQueueItemId = currentQueueItemIdOverride
++            ?.takeIf { id -> existingItems.any { item -> item.queueItemId == id } }
++            ?: state.currentQueueItemId
++        val edited = uniqueTrackIds.asReversed().fold(
+             EditedQueue(
+-                items = queueDao.getQueueItems(),
+-                currentQueueItemId = state.currentQueueItemId,
++                items = existingItems,
++                currentQueueItemId = effectiveCurrentQueueItemId,
+                 changed = false,
+                 message = null
+             )
+@@ -182,11 +196,18 @@
+         replaceQueue(updatedState, edited.items, edited.message)
+     }
+ 
+-    suspend fun playNextRemote(remoteItemId: String): QueueCommandResult = withContext(dispatchers.io) {
+-        val state = queueDao.getQueueState() ?: defaultQueueState()
++    suspend fun playNextRemote(
++        remoteItemId: String,
++        currentQueueItemIdOverride: String? = null
++    ): QueueCommandResult = withContext(dispatchers.io) {
++        val state = queueDao.getQueueState() ?: defaultQueueState()
++        val existingItems = queueDao.getQueueItems()
++        val effectiveCurrentQueueItemId = currentQueueItemIdOverride
++            ?.takeIf { id -> existingItems.any { item -> item.queueItemId == id } }
++            ?: state.currentQueueItemId
+         val edited = QueueListEditor.playNext(
+-            existingItems = queueDao.getQueueItems(),
+-            currentQueueItemId = state.currentQueueItemId,
++            existingItems = existingItems,
++            currentQueueItemId = effectiveCurrentQueueItemId,
+             newItem = newRemoteQueueItem(
+                 remoteItemId = remoteItemId,
+                 insertedBy = QueueListEditor.INSERTED_BY_PLAY_NEXT
+--- a/app/src/main/java/com/fenl/fenlzer/playback/PlaybackController.kt
++++ b/app/src/main/java/com/fenl/fenlzer/playback/PlaybackController.kt
+@@ -59,14 +59,20 @@
+ 
+     fun playNext(trackId: String) {
+         scope.launch {
+-            val result = queueRepository.playNext(trackId)
++            val result = queueRepository.playNext(
++                trackId = trackId,
++                currentQueueItemIdOverride = liveCurrentQueueItemId()
++            )
+             applyQueueResult(result, playWhenReady = false)
+         }
+     }
+ 
+     fun playNext(trackIds: List<String>) {
+         scope.launch {
+-            val result = queueRepository.playNext(trackIds)
++            val result = queueRepository.playNext(
++                trackIds = trackIds,
++                currentQueueItemIdOverride = liveCurrentQueueItemId()
++            )
+             applyQueueResult(result, playWhenReady = false)
+         }
+     }
+@@ -98,7 +104,10 @@
+ 
+     fun playNextRemote(remoteItemId: String) {
+         scope.launch {
+-            val result = queueRepository.playNextRemote(remoteItemId)
++            val result = queueRepository.playNextRemote(
++                remoteItemId = remoteItemId,
++                currentQueueItemIdOverride = liveCurrentQueueItemId()
++            )
+             applyQueueResult(result, playWhenReady = false)
+         }
+     }
+@@ -429,6 +438,11 @@
+             },
+             ContextCompat.getMainExecutor(context)
+         )
++    }
++
++    private fun liveCurrentQueueItemId(): String? {
++        return mediaController?.currentMediaItem?.mediaId
++            ?: mutableUiState.value.currentItem?.queueItemId
+     }
+ 
+     private suspend fun applyQueueResult(
+--- a/app/src/test/java/com/fenl/fenlzer/data/repository/QueueListEditorTest.kt
++++ b/app/src/test/java/com/fenl/fenlzer/data/repository/QueueListEditorTest.kt
+@@ -7,7 +7,7 @@
+ 
+ class QueueListEditorTest {
+     @Test
+-    fun playNextMovesDuplicateAfterExistingPlayNextItems() {
++    fun playNextMovesDuplicateImmediatelyAfterCurrent() {
+         val current = item("current", "track-1", 0, QueueListEditor.STATE_CURRENT, "TAP")
+         val firstPlayNext = item("play-next", "track-2", 1, QueueListEditor.STATE_UPCOMING, "PLAY_NEXT")
+         val duplicate = item("old-duplicate", "track-3", 2, QueueListEditor.STATE_UPCOMING, "ADD_TO_QUEUE")
+@@ -21,11 +21,11 @@
+         )
+ 
+         assertEquals(
+-            listOf("track-1", "track-2", "track-3", "track-4"),
++            listOf("track-1", "track-3", "track-2", "track-4"),
+             edited.items.mapNotNull { it.trackId }
+         )
+-        assertEquals("new-duplicate", edited.items[2].queueItemId)
+-        assertEquals(QueueListEditor.INSERTED_BY_PLAY_NEXT, edited.items[2].insertedBy)
++        assertEquals("new-duplicate", edited.items[1].queueItemId)
++        assertEquals(QueueListEditor.INSERTED_BY_PLAY_NEXT, edited.items[1].insertedBy)
+     }
+ 
+     @Test

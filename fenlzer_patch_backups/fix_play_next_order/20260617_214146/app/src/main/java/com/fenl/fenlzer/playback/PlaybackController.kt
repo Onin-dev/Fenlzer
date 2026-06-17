@@ -59,20 +59,14 @@ class PlaybackController(
 
     fun playNext(trackId: String) {
         scope.launch {
-            val result = queueRepository.playNext(
-                trackId = trackId,
-                currentQueueItemIdOverride = liveCurrentQueueItemId()
-            )
+            val result = queueRepository.playNext(trackId)
             applyQueueResult(result, playWhenReady = false)
         }
     }
 
     fun playNext(trackIds: List<String>) {
         scope.launch {
-            val result = queueRepository.playNext(
-                trackIds = trackIds,
-                currentQueueItemIdOverride = liveCurrentQueueItemId()
-            )
+            val result = queueRepository.playNext(trackIds)
             applyQueueResult(result, playWhenReady = false)
         }
     }
@@ -104,10 +98,7 @@ class PlaybackController(
 
     fun playNextRemote(remoteItemId: String) {
         scope.launch {
-            val result = queueRepository.playNextRemote(
-                remoteItemId = remoteItemId,
-                currentQueueItemIdOverride = liveCurrentQueueItemId()
-            )
+            val result = queueRepository.playNextRemote(remoteItemId)
             applyQueueResult(result, playWhenReady = false)
         }
     }
@@ -438,11 +429,6 @@ fun startSleepTimerDuration(durationMs: Long) {
             },
             ContextCompat.getMainExecutor(context)
         )
-    }
-
-    private fun liveCurrentQueueItemId(): String? {
-        return mediaController?.currentMediaItem?.mediaId
-            ?: mutableUiState.value.currentItem?.queueItemId
     }
 
     private suspend fun applyQueueResult(

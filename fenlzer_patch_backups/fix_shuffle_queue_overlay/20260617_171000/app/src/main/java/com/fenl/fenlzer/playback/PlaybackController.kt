@@ -59,20 +59,14 @@ class PlaybackController(
 
     fun playNext(trackId: String) {
         scope.launch {
-            val result = queueRepository.playNext(
-                trackId = trackId,
-                currentQueueItemIdOverride = liveCurrentQueueItemId()
-            )
+            val result = queueRepository.playNext(trackId)
             applyQueueResult(result, playWhenReady = false)
         }
     }
 
     fun playNext(trackIds: List<String>) {
         scope.launch {
-            val result = queueRepository.playNext(
-                trackIds = trackIds,
-                currentQueueItemIdOverride = liveCurrentQueueItemId()
-            )
+            val result = queueRepository.playNext(trackIds)
             applyQueueResult(result, playWhenReady = false)
         }
     }
@@ -104,10 +98,7 @@ class PlaybackController(
 
     fun playNextRemote(remoteItemId: String) {
         scope.launch {
-            val result = queueRepository.playNextRemote(
-                remoteItemId = remoteItemId,
-                currentQueueItemIdOverride = liveCurrentQueueItemId()
-            )
+            val result = queueRepository.playNextRemote(remoteItemId)
             applyQueueResult(result, playWhenReady = false)
         }
     }
@@ -440,11 +431,6 @@ fun startSleepTimerDuration(durationMs: Long) {
         )
     }
 
-    private fun liveCurrentQueueItemId(): String? {
-        return mediaController?.currentMediaItem?.mediaId
-            ?: mutableUiState.value.currentItem?.queueItemId
-    }
-
     private suspend fun applyQueueResult(
         result: QueueCommandResult,
         playWhenReady: Boolean,
@@ -535,12 +521,7 @@ fun startSleepTimerDuration(durationMs: Long) {
             "OFF" -> Player.REPEAT_MODE_OFF
             else -> Player.REPEAT_MODE_ALL
         }
-        // Fenlzer stores the effective shuffled order in QueueRepository and
-        // shows that same persisted order in the Queue screen. Do not also
-        // enable Media3 shuffle here, otherwise playback follows Media3's
-        // private shuffle order while the Queue screen keeps showing the
-        // repository order, making "next" and drag reordering misleading.
-        controller.shuffleModeEnabled = false
+        controller.shuffleModeEnabled = queue.shuffleEnabled
         controller.playWhenReady = playWhenReady
         suppressTransitionSync = false
 
@@ -942,10 +923,7 @@ private fun syncCurrentQueueItem(
                     Player.REPEAT_MODE_OFF -> "OFF"
                     else -> "ALL"
                 },
-                // Keep the UI toggle tied to the repository state, not to Media3.
-                // Media3 shuffle is intentionally disabled because Fenlzer uses
-                // the persisted queue order as the single source of truth.
-                shuffleEnabled = current.shuffleEnabled
+                shuffleEnabled = player.shuffleModeEnabled
             )
         }
         updateSleepTimerState()

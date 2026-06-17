@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -74,18 +73,12 @@ import coil3.compose.AsyncImage
 import com.fenl.fenlzer.data.repository.QueueTrackItem
 import com.fenl.fenlzer.playback.PlaybackUiState
 import com.fenl.fenlzer.ui.components.DragStepHandle
-import com.fenl.fenlzer.ui.components.NowPlayingArtworkOverlay
-import com.fenl.fenlzer.ui.components.NowPlayingStatusBadge
-import com.fenl.fenlzer.ui.components.nowPlayingContentColor
-import com.fenl.fenlzer.ui.components.nowPlayingRowColor
-import com.fenl.fenlzer.ui.components.nowPlayingSecondaryContentColor
 import com.fenl.fenlzer.ui.theme.Dimensions
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import androidx.compose.ui.layout.ContentScale
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.fenl.fenlzer.data.repository.QueueListEditor
 
@@ -122,7 +115,6 @@ fun QueueScreen(
     var dragStartIndex by remember { mutableIntStateOf(-1) }
     var dragTargetIndex by remember { mutableIntStateOf(-1) }
     var dragOffsetPx by remember { mutableFloatStateOf(0f) }
-    var autoScrollInFlight by remember { mutableStateOf(false) }
 
     val allSourceIds = playbackState.queueItems.map { it.queueItemId }
     val allSourceIdSet = allSourceIds.toSet()
@@ -138,24 +130,12 @@ fun QueueScreen(
     val sourceIds = sourceItems.map { it.queueItemId }
     val sourceIdSet = sourceIds.toSet()
 
-    LaunchedEffect(sourceIds.joinToString("|"), pendingOrderIds) {
+    LaunchedEffect(sourceIds.joinToString("|")) {
         val pending = pendingOrderIds
         if (pending != null) {
             when {
+                pending == sourceIds -> pendingOrderIds = null
                 pending.toSet() != sourceIdSet -> pendingOrderIds = null
-                pending == sourceIds -> {
-                    // applyQueueResult() updates the UI optimistically, then the
-                    // Room-backed queue flow can still deliver one or more stale
-                    // or mixed emissions from the replace transaction. If the
-                    // optimistic order is cleared immediately, long drag moves can
-                    // flicker between the old and new positions. Keep the pending
-                    // display order briefly; this effect is cancelled if another
-                    // source order arrives during the settling window.
-                    delay(450L)
-                    if (pendingOrderIds == pending) {
-                        pendingOrderIds = null
-                    }
-                }
             }
         }
     }
@@ -287,8 +267,6 @@ fun QueueScreen(
             deltaY = deltaY,
             canScrollUp = dragTargetIndex > 0 || dragOffsetPx > minDragOffsetPx(),
             canScrollDown = dragTargetIndex < visibleItems.lastIndex || dragOffsetPx < maxDragOffsetPx(),
-            autoScrollInFlight = autoScrollInFlight,
-            onAutoScrollInFlightChange = { autoScrollInFlight = it },
             onScrolled = { consumedScrollPx ->
                 updateDragOffsetSafely(dragOffsetPx + consumedScrollPx)
             }
@@ -369,7 +347,6 @@ fun QueueScreen(
                             QueueRow(
                                 item = item,
                                 isCurrent = isCurrent,
-                                currentTrackIsPlaying = playbackState.isPlaying,
                                 isQueueDragActive = draggingQueueItemId != null,
                                 isDragging = isDragging,
                                 dragOffsetPx = visualQueueRowOffsetPx(
@@ -450,26 +427,17 @@ private fun autoScrollQueueIfNeeded(
     deltaY: Float,
     canScrollUp: Boolean,
     canScrollDown: Boolean,
-    autoScrollInFlight: Boolean,
-    onAutoScrollInFlightChange: (Boolean) -> Unit,
     onScrolled: (Float) -> Unit
 ) {
     val layoutInfo = listState.layoutInfo
     val visibleInfo = layoutInfo.visibleItemsInfo
-    if (visibleInfo.isEmpty() || autoScrollInFlight) return
+    if (visibleInfo.isEmpty()) return
 
     val draggedInfo = visibleInfo.firstOrNull { it.index == dragTargetIndex }
     val firstVisible = visibleInfo.first()
     val lastVisible = visibleInfo.last()
-    val totalItems = layoutInfo.totalItemsCount
 
-    // Auto-scroll only when the dragged row is genuinely near an edge. The
-    // previous 3.25-row threshold and 44..190 px scroll step made the list
-    // accelerate too aggressively, often disposing the dragged row and ending
-    // drag mode. Keep the list under the pointer by using a smaller activation
-    // zone, smaller scroll steps, and one scroll job at a time.
-    val rowSizePx = (draggedInfo?.size ?: firstVisible.size).toFloat()
-    val thresholdPx = rowSizePx * 1.15f
+    val thresholdPx = (draggedInfo?.size ?: firstVisible.size) * 3.25f
     val draggedTop = draggedInfo?.offset ?: if (deltaY < 0f) firstVisible.offset else lastVisible.offset
     val draggedBottom = draggedTop + (draggedInfo?.size ?: firstVisible.size)
     val distanceToTop = draggedTop - layoutInfo.viewportStartOffset
@@ -477,20 +445,15 @@ private fun autoScrollQueueIfNeeded(
 
     val direction = when {
         canScrollUp && deltaY < 0f && dragTargetIndex > 0 && (distanceToTop < thresholdPx || dragTargetIndex <= firstVisible.index + 1) -> -1f
-        canScrollDown && deltaY > 0f && dragTargetIndex < totalItems - 1 && (distanceToBottom < thresholdPx || dragTargetIndex >= lastVisible.index - 1) -> 1f
+        canScrollDown && deltaY > 0f && dragTargetIndex < lastVisible.index && (distanceToBottom < thresholdPx || dragTargetIndex >= lastVisible.index - 1) -> 1f
         else -> 0f
     }
 
     if (direction != 0f) {
-        val scrollAmount = direction * (abs(deltaY) * 0.85f).coerceIn(6f, 28f)
-        onAutoScrollInFlightChange(true)
+        val scrollAmount = direction * (abs(deltaY) * 4.6f).coerceIn(44f, 190f)
         scope.launch {
-            try {
-                val consumed = listState.scrollBy(scrollAmount)
-                onScrolled(consumed)
-            } finally {
-                onAutoScrollInFlightChange(false)
-            }
+            val consumed = listState.scrollBy(scrollAmount)
+            onScrolled(consumed)
         }
     }
 }
@@ -655,7 +618,6 @@ private fun EmptyQueueState(modifier: Modifier = Modifier) {
 private fun QueueRow(
     item: QueueTrackItem,
     isCurrent: Boolean,
-    currentTrackIsPlaying: Boolean = false,
     isQueueDragActive: Boolean,
     isDragging: Boolean,
     dragOffsetPx: Float,
@@ -738,7 +700,13 @@ private fun QueueRow(
                 .fillMaxWidth()
                 .height(QueueRowHeight)
                 .graphicsLayer { translationX = if (isQueueDragActive) 0f else swipeOffsetX }
-                .background(nowPlayingRowColor(isNowPlaying = isCurrent)),
+                .background(
+                    if (isCurrent) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    }
+                ),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(
@@ -768,11 +736,7 @@ private fun QueueRow(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                QueueThumbnail(
-                    item = item,
-                    isCurrent = isCurrent,
-                    currentTrackIsPlaying = currentTrackIsPlaying
-                )
+                QueueThumbnail(item = item, isCurrent = isCurrent)
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -784,21 +748,18 @@ private fun QueueRow(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                        color = nowPlayingContentColor(isCurrent)
+                        color = if (isCurrent) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = queueSubtitle(item),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = nowPlayingSecondaryContentColor(isCurrent),
-                            modifier = Modifier.weight(1f)
-                        )
-                        if (isCurrent) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                            NowPlayingStatusBadge(isPlaying = currentTrackIsPlaying)
+                    Text(
+                        text = queueSubtitle(item),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = if (isCurrent) {
+                            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f)
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
                         }
-                    }
+                    )
                 }
             }
 
@@ -824,8 +785,7 @@ private fun QueueRow(
 @Composable
 private fun QueueThumbnail(
     item: QueueTrackItem,
-    isCurrent: Boolean,
-    currentTrackIsPlaying: Boolean = false
+    isCurrent: Boolean
 ) {
     Box(
         modifier = Modifier
@@ -852,16 +812,10 @@ private fun QueueThumbnail(
                 imageVector = Icons.Rounded.MusicNote,
                 contentDescription = null,
                 tint = if (isCurrent) {
-                    nowPlayingContentColor(true)
+                    MaterialTheme.colorScheme.onPrimaryContainer
                 } else {
                     MaterialTheme.colorScheme.onSurfaceVariant
                 }
-            )
-        }
-        if (isCurrent) {
-            NowPlayingArtworkOverlay(
-                isPlaying = currentTrackIsPlaying,
-                modifier = Modifier.align(Alignment.BottomEnd)
             )
         }
     }

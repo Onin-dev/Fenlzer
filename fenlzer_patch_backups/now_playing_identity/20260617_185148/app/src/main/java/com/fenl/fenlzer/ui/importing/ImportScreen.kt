@@ -72,11 +72,6 @@ import com.fenl.fenlzer.importing.youtube.YoutubePlaylistPreview
 import com.fenl.fenlzer.importing.youtube.YoutubePlaylistPreviewItem
 import com.fenl.fenlzer.importing.youtube.YoutubeSearchResultItem
 import com.fenl.fenlzer.ui.components.FenlzerLoadingPlaceholder
-import com.fenl.fenlzer.ui.components.NowPlayingArtworkOverlay
-import com.fenl.fenlzer.ui.components.NowPlayingStatusBadge
-import com.fenl.fenlzer.ui.components.nowPlayingContentColor
-import com.fenl.fenlzer.ui.components.nowPlayingRowColor
-import com.fenl.fenlzer.ui.components.nowPlayingSecondaryContentColor
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -121,8 +116,6 @@ fun ImportScreen(
     onOpenSongDetails: (String) -> Unit,
     onClearResult: () -> Unit,
     onClearYoutubeResult: () -> Unit,
-    currentRemoteItemId: String? = null,
-    currentTrackIsPlaying: Boolean = false,
     activeImportsRequestId: Int = 0,
     modifier: Modifier = Modifier
 ) {
@@ -182,19 +175,10 @@ fun ImportScreen(
                     onBack = { selectedImportSectionName = ImportSection.HOME.name }
                 )
                 YoutubeSearchPanel(
-
                     state = youtubeState,
-
-                    currentRemoteItemId = currentRemoteItemId,
-
-                    currentTrackIsPlaying = currentTrackIsPlaying,
-
                     onQueryChanged = onYoutubeQueryChanged,
-
                     onSearch = onSearchYoutube,
-
                     onImportResult = onImportYoutubeResult
-
                 )
             }
 
@@ -538,8 +522,6 @@ private fun ImportActionToolbar(
 @Composable
 private fun YoutubeSearchPanel(
     state: YoutubeImportUiState,
-    currentRemoteItemId: String? = null,
-    currentTrackIsPlaying: Boolean = false,
     onQueryChanged: (String) -> Unit,
     onSearch: () -> Unit,
     onImportResult: (YoutubeSearchResultItem) -> Unit
@@ -597,8 +579,6 @@ private fun YoutubeSearchPanel(
             YoutubeSearchResultRow(
                 result = result,
                 importing = state.isImportRunning,
-                isNowPlaying = result.remoteItemId == currentRemoteItemId,
-                currentTrackIsPlaying = currentTrackIsPlaying,
                 onImport = { onImportResult(result) }
             )
         }
@@ -915,8 +895,6 @@ private fun LoadingResultPlaceholders(
 private fun YoutubeSearchResultRow(
     result: YoutubeSearchResultItem,
     importing: Boolean,
-    isNowPlaying: Boolean = false,
-    currentTrackIsPlaying: Boolean = false,
     onImport: () -> Unit
 ) {
     val disabledReason = when {
@@ -930,7 +908,7 @@ private fun YoutubeSearchResultRow(
         modifier = Modifier
             .fillMaxWidth()
             .background(
-                color = nowPlayingRowColor(isNowPlaying = isNowPlaying).copy(alpha = if (isNowPlaying) 0.92f else 0.55f),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
                 shape = RoundedCornerShape(8.dp)
             )
             .padding(10.dp),
@@ -958,38 +936,25 @@ private fun YoutubeSearchResultRow(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            if (isNowPlaying) {
-                NowPlayingArtworkOverlay(
-                    isPlaying = currentTrackIsPlaying,
-                    modifier = Modifier.align(Alignment.BottomEnd)
-                )
-            }
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = result.title,
                 style = MaterialTheme.typography.bodyLarge,
-                fontWeight = if (isNowPlaying) FontWeight.Bold else FontWeight.SemiBold,
-                color = nowPlayingContentColor(isNowPlaying),
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = listOfNotNull(
-                        result.artistOrChannel?.ifBlank { null },
-                        result.durationMs?.formatDuration()
-                    ).joinToString(" - ").ifBlank { "YouTube" },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = nowPlayingSecondaryContentColor(isNowPlaying),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                if (isNowPlaying) {
-                    NowPlayingStatusBadge(isPlaying = currentTrackIsPlaying)
-                }
-            }
+            Text(
+                text = listOfNotNull(
+                    result.artistOrChannel?.ifBlank { null },
+                    result.durationMs?.formatDuration()
+                ).joinToString(" - ").ifBlank { "YouTube" },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
             disabledReason?.let { reason ->
                 Text(
                     text = reason,

@@ -48,11 +48,6 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.fenl.fenlzer.data.repository.DiscoverUiItem
 import com.fenl.fenlzer.data.repository.DiscoverUiState
-import com.fenl.fenlzer.ui.components.NowPlayingArtworkOverlay
-import com.fenl.fenlzer.ui.components.NowPlayingStatusBadge
-import com.fenl.fenlzer.ui.components.nowPlayingContentColor
-import com.fenl.fenlzer.ui.components.nowPlayingRowColor
-import com.fenl.fenlzer.ui.components.nowPlayingSecondaryContentColor
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -74,8 +69,6 @@ fun DiscoverScreen(
     onAddToPlaylist: (String, String) -> Unit,
     onImport: (String) -> Unit,
     onFavourite: (String) -> Unit,
-    currentRemoteItemId: String? = null,
-    currentTrackIsPlaying: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -119,8 +112,6 @@ fun DiscoverScreen(
                         isRefreshing = isRefreshing,
                         isPreparing = preparingRemoteItemId == item.remoteItemId ||
                             item.streamState == "GETTING_STREAM",
-                        isNowPlaying = item.remoteItemId == currentRemoteItemId,
-                        currentTrackIsPlaying = currentTrackIsPlaying,
                         onPlay = { onPlay(item.remoteItemId) },
                         onPlayNext = { onPlayNext(item.remoteItemId) },
                         onAddToQueue = { onAddToQueue(item.remoteItemId) },
@@ -220,8 +211,6 @@ private fun DiscoverRow(
     item: DiscoverUiItem,
     isRefreshing: Boolean,
     isPreparing: Boolean,
-    isNowPlaying: Boolean = false,
-    currentTrackIsPlaying: Boolean = false,
     onPlay: () -> Unit,
     onPlayNext: () -> Unit,
     onAddToQueue: () -> Unit,
@@ -233,9 +222,7 @@ private fun DiscoverRow(
     val enabled = !isRefreshing && !isPreparing
     Surface(
         shape = MaterialTheme.shapes.small,
-        color = nowPlayingRowColor(isNowPlaying = isNowPlaying),
-        contentColor = nowPlayingContentColor(isNowPlaying),
-        tonalElevation = if (isNowPlaying) 2.dp else 1.dp,
+        tonalElevation = 1.dp,
         modifier = Modifier
             .fillMaxWidth()
             .clickable(
@@ -267,38 +254,25 @@ private fun DiscoverRow(
                 } else {
                     Icon(imageVector = Icons.Rounded.MusicNote, contentDescription = null)
                 }
-                if (isNowPlaying) {
-                    NowPlayingArtworkOverlay(
-                        isPlaying = currentTrackIsPlaying,
-                        modifier = Modifier.align(Alignment.BottomEnd)
-                    )
-                }
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = item.title,
                     style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = if (isNowPlaying) FontWeight.Bold else FontWeight.SemiBold,
-                    color = nowPlayingContentColor(isNowPlaying),
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = listOfNotNull(
-                            item.artistOrChannel.ifBlank { null },
-                            item.durationMs.takeIf { it > 0L }?.formatDuration()
-                        ).joinToString(" - "),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = nowPlayingSecondaryContentColor(isNowPlaying),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    if (isNowPlaying) {
-                        NowPlayingStatusBadge(isPlaying = currentTrackIsPlaying)
-                    }
-                }
+                Text(
+                    text = listOfNotNull(
+                        item.artistOrChannel.ifBlank { null },
+                        item.durationMs.takeIf { it > 0L }?.formatDuration()
+                    ).joinToString(" - "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
             if (isPreparing) {
                 CircularProgressIndicator(

@@ -68,28 +68,18 @@ class QueueRepository(
         replaceQueue(updatedState, edited.items, edited.message)
     }
 
-    suspend fun playNext(
-        trackId: String,
-        currentQueueItemIdOverride: String? = null
-    ): QueueCommandResult = withContext(dispatchers.io) {
+    suspend fun playNext(trackId: String): QueueCommandResult = withContext(dispatchers.io) {
         val state = queueDao.getQueueState() ?: defaultQueueState()
-        val existingItems = queueDao.getQueueItems()
-        val effectiveCurrentQueueItemId = currentQueueItemIdOverride
-            ?.takeIf { id -> existingItems.any { item -> item.queueItemId == id } }
-            ?: state.currentQueueItemId
         val edited = QueueListEditor.playNext(
-            existingItems = existingItems,
-            currentQueueItemId = effectiveCurrentQueueItemId,
+            existingItems = queueDao.getQueueItems(),
+            currentQueueItemId = state.currentQueueItemId,
             newItem = newQueueItem(trackId, insertedBy = QueueListEditor.INSERTED_BY_PLAY_NEXT)
         )
         val updatedState = state.markModified(edited)
         replaceQueue(updatedState, edited.items, edited.message)
     }
 
-    suspend fun playNext(
-        trackIds: List<String>,
-        currentQueueItemIdOverride: String? = null
-    ): QueueCommandResult = withContext(dispatchers.io) {
+    suspend fun playNext(trackIds: List<String>): QueueCommandResult = withContext(dispatchers.io) {
         val uniqueTrackIds = trackIds.filter { it.isNotBlank() }.distinct()
         if (uniqueTrackIds.isEmpty()) {
             return@withContext replaceQueue(
@@ -99,14 +89,10 @@ class QueueRepository(
             )
         }
         val state = queueDao.getQueueState() ?: defaultQueueState()
-        val existingItems = queueDao.getQueueItems()
-        val effectiveCurrentQueueItemId = currentQueueItemIdOverride
-            ?.takeIf { id -> existingItems.any { item -> item.queueItemId == id } }
-            ?: state.currentQueueItemId
-        val edited = uniqueTrackIds.asReversed().fold(
+        val edited = uniqueTrackIds.fold(
             EditedQueue(
-                items = existingItems,
-                currentQueueItemId = effectiveCurrentQueueItemId,
+                items = queueDao.getQueueItems(),
+                currentQueueItemId = state.currentQueueItemId,
                 changed = false,
                 message = null
             )
@@ -196,18 +182,11 @@ class QueueRepository(
         replaceQueue(updatedState, edited.items, edited.message)
     }
 
-    suspend fun playNextRemote(
-        remoteItemId: String,
-        currentQueueItemIdOverride: String? = null
-    ): QueueCommandResult = withContext(dispatchers.io) {
+    suspend fun playNextRemote(remoteItemId: String): QueueCommandResult = withContext(dispatchers.io) {
         val state = queueDao.getQueueState() ?: defaultQueueState()
-        val existingItems = queueDao.getQueueItems()
-        val effectiveCurrentQueueItemId = currentQueueItemIdOverride
-            ?.takeIf { id -> existingItems.any { item -> item.queueItemId == id } }
-            ?: state.currentQueueItemId
         val edited = QueueListEditor.playNext(
-            existingItems = existingItems,
-            currentQueueItemId = effectiveCurrentQueueItemId,
+            existingItems = queueDao.getQueueItems(),
+            currentQueueItemId = state.currentQueueItemId,
             newItem = newRemoteQueueItem(
                 remoteItemId = remoteItemId,
                 insertedBy = QueueListEditor.INSERTED_BY_PLAY_NEXT

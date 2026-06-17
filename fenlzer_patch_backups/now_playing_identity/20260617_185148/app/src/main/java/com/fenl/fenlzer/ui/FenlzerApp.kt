@@ -1042,10 +1042,6 @@ private fun FenlzerNavHost(
         ?.collectAsStateWithLifecycle(initialValue = null)
         ?: remember { mutableStateOf(null) }
 
-    val currentLocalTrackId = playbackState.currentItem?.localTrackId
-    val currentRemoteItemId = playbackState.currentItem?.remoteItemId
-    val currentTrackIsPlaying = playbackState.isPlaying
-
     fun refreshStorageUsage() {
         val repository = appGraph.storageUsageRepository ?: return
         coroutineScope.launch {
@@ -1279,9 +1275,7 @@ private fun FenlzerNavHost(
                 onDeleteTracks = ::requestDeleteTracks,
                 defaultHomeSort = appSettings.defaultHomeSort,
                 highlightedTrackIds = homeHighlightTrackIds.toSet(),
-                highlightRequestId = homeHighlightRequestId,
-                currentTrackId = currentLocalTrackId,
-                currentTrackIsPlaying = currentTrackIsPlaying
+                highlightRequestId = homeHighlightRequestId
             )
         }
         composable(FenlzerRoute.Playlists.route) {
@@ -1315,9 +1309,7 @@ private fun FenlzerNavHost(
                         onAddToQueue = ::addDiscoverItemToQueue,
                         onAddToPlaylist = onAddRemoteToPlaylist,
                         onImport = { remoteItemId -> importDiscoverItem(remoteItemId, favourite = false) },
-                        onFavourite = { remoteItemId -> importDiscoverItem(remoteItemId, favourite = true) },
-                        currentRemoteItemId = currentRemoteItemId,
-                        currentTrackIsPlaying = currentTrackIsPlaying
+                        onFavourite = { remoteItemId -> importDiscoverItem(remoteItemId, favourite = true) }
                     )
                 },
                 libraryTracks = libraryTracks,
@@ -1420,9 +1412,7 @@ private fun FenlzerNavHost(
                     }
                 },
                 onAddToPlaylist = onAddToPlaylist,
-                onAddTracksToPlaylist = onAddBatchToPlaylist,
-                currentTrackId = currentLocalTrackId,
-                currentTrackIsPlaying = currentTrackIsPlaying
+                onAddTracksToPlaylist = onAddBatchToPlaylist
             )
         }
         composable(FenlzerRoute.Import.route) {
@@ -1475,8 +1465,6 @@ private fun FenlzerNavHost(
                 onOpenSongDetails = onOpenSongDetails,
                 onClearResult = localImportViewModel::clearResult,
                 onClearYoutubeResult = youtubeImportViewModel::clearLastImportResult,
-                currentRemoteItemId = currentRemoteItemId,
-                currentTrackIsPlaying = currentTrackIsPlaying,
                 activeImportsRequestId = activeImportsRequestId
             )
         }

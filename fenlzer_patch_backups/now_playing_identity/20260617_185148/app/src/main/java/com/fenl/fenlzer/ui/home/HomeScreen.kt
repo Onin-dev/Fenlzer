@@ -91,11 +91,6 @@ import com.fenl.fenlzer.data.repository.LibraryTrack
 import com.fenl.fenlzer.data.settings.HomeSort
 import com.fenl.fenlzer.domain.text.SearchNormalizer
 import com.fenl.fenlzer.ui.components.FenlzerLoadingPlaceholder
-import com.fenl.fenlzer.ui.components.NowPlayingArtworkOverlay
-import com.fenl.fenlzer.ui.components.NowPlayingStatusBadge
-import com.fenl.fenlzer.ui.components.nowPlayingContentColor
-import com.fenl.fenlzer.ui.components.nowPlayingRowColor
-import com.fenl.fenlzer.ui.components.nowPlayingSecondaryContentColor
 import java.util.Locale
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.material.icons.rounded.Close
@@ -133,8 +128,6 @@ fun HomeScreen(
     defaultHomeSort: HomeSort,
     highlightedTrackIds: Set<String>,
     highlightRequestId: Int,
-    currentTrackId: String? = null,
-    currentTrackIsPlaying: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var searchQuery by rememberSaveable { mutableStateOf("") }
@@ -188,8 +181,6 @@ fun HomeScreen(
             onOpenSongDetails = onOpenSongDetails,
             onEditMetadata = onEditMetadata,
             onDeleteTracks = onDeleteTracks,
-            currentTrackId = currentTrackId,
-            currentTrackIsPlaying = currentTrackIsPlaying,
             modifier = modifier
         )
         return
@@ -210,8 +201,6 @@ fun HomeScreen(
             onOpenSongDetails = onOpenSongDetails,
             onEditMetadata = onEditMetadata,
             onDeleteTracks = onDeleteTracks,
-            currentTrackId = currentTrackId,
-            currentTrackIsPlaying = currentTrackIsPlaying,
             modifier = modifier
         )
         return
@@ -327,8 +316,6 @@ fun HomeScreen(
                         track = track,
                         selected = track.trackId in selectedTrackIds,
                         selectionMode = selectionMode,
-                        isNowPlaying = track.trackId == currentTrackId,
-                        currentTrackIsPlaying = currentTrackIsPlaying,
                         onClick = {
                             if (selectionMode) {
                                 selectedTrackIds = selectedTrackIds.toggle(track.trackId)
@@ -571,8 +558,6 @@ private fun ArtistDetailView(
     onOpenSongDetails: (LibraryTrack) -> Unit,
     onEditMetadata: (LibraryTrack) -> Unit,
     onDeleteTracks: (List<LibraryTrack>) -> Unit,
-    currentTrackId: String? = null,
-    currentTrackIsPlaying: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var showRenameDialog by rememberSaveable { mutableStateOf(false) }
@@ -641,8 +626,6 @@ private fun ArtistDetailView(
             onEditMetadata = onEditMetadata,
             onDeleteTracks = onDeleteTracks,
             showDeleteAction = false,
-            currentTrackId = currentTrackId,
-            currentTrackIsPlaying = currentTrackIsPlaying,
             modifier = Modifier.weight(1f)
         )
     }
@@ -663,8 +646,6 @@ private fun AlbumDetailView(
     onOpenSongDetails: (LibraryTrack) -> Unit,
     onEditMetadata: (LibraryTrack) -> Unit,
     onDeleteTracks: (List<LibraryTrack>) -> Unit,
-    currentTrackId: String? = null,
-    currentTrackIsPlaying: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var showEditDialog by rememberSaveable { mutableStateOf(false) }
@@ -748,8 +729,6 @@ private fun AlbumDetailView(
             onEditMetadata = onEditMetadata,
             onDeleteTracks = onDeleteTracks,
             showDeleteAction = false,
-            currentTrackId = currentTrackId,
-            currentTrackIsPlaying = currentTrackIsPlaying,
             modifier = Modifier.weight(1f)
         )
     }
@@ -766,8 +745,6 @@ private fun TrackRows(
     onOpenSongDetails: (LibraryTrack) -> Unit,
     onEditMetadata: (LibraryTrack) -> Unit,
     onDeleteTracks: (List<LibraryTrack>) -> Unit,
-    currentTrackId: String? = null,
-    currentTrackIsPlaying: Boolean = false,
     showDeleteAction: Boolean = true,
     modifier: Modifier = Modifier
 ) {
@@ -781,8 +758,6 @@ private fun TrackRows(
                 track = track,
                 selected = false,
                 selectionMode = false,
-                isNowPlaying = track.trackId == currentTrackId,
-                currentTrackIsPlaying = currentTrackIsPlaying,
                 onClick = { onTrackClick(track) },
                 onLongClick = {},
                 onToggleFavourite = { onToggleFavourite(track) },
@@ -1116,8 +1091,6 @@ private fun TrackRow(
     track: LibraryTrack,
     selected: Boolean,
     selectionMode: Boolean,
-    isNowPlaying: Boolean = false,
-    currentTrackIsPlaying: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onToggleFavourite: () -> Unit,
@@ -1132,35 +1105,32 @@ private fun TrackRow(
     var actionMenuExpanded by remember { mutableStateOf(false) }
 
     var menuExpanded by remember { mutableStateOf(false) }
-    val rowBackground = nowPlayingRowColor(
-        isNowPlaying = isNowPlaying,
-        isSelected = selected
-    )
+    val rowBackground = if (selected) {
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
 
     ListItem(
-        colors = ListItemDefaults.colors(containerColor = rowBackground),
+        colors = ListItemDefaults.colors(
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.70f)
+            } else {
+                MaterialTheme.colorScheme.surface
+            }
+        ),
         headlineContent = {
             Text(
                 text = track.displayTitle,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                fontWeight = if (isNowPlaying) FontWeight.SemiBold else FontWeight.Normal,
-                color = nowPlayingContentColor(isNowPlaying)
+                overflow = TextOverflow.Ellipsis
             )
         },
         supportingContent = {
-            TrackArtistDurationLine(
-                track = track,
-                isNowPlaying = isNowPlaying,
-                currentTrackIsPlaying = currentTrackIsPlaying
-            )
+            TrackArtistDurationLine(track = track)
         },
         leadingContent = {
-            TrackArtwork(
-                track = track,
-                isNowPlaying = isNowPlaying,
-                currentTrackIsPlaying = currentTrackIsPlaying
-            )
+            TrackArtwork(track = track)
         },
         
         trailingContent = {
@@ -1191,11 +1161,7 @@ private fun TrackRow(
 
 
 @Composable
-private fun TrackArtistDurationLine(
-    track: LibraryTrack,
-    isNowPlaying: Boolean,
-    currentTrackIsPlaying: Boolean
-) {
+private fun TrackArtistDurationLine(track: LibraryTrack) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
@@ -1203,19 +1169,15 @@ private fun TrackArtistDurationLine(
         Text(
             text = track.artist,
             style = MaterialTheme.typography.bodyMedium,
-            color = nowPlayingSecondaryContentColor(isNowPlaying),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
         )
-        if (isNowPlaying) {
-            Spacer(modifier = Modifier.width(8.dp))
-            NowPlayingStatusBadge(isPlaying = currentTrackIsPlaying)
-        }
         Text(
             text = track.durationMs.formatDuration(),
             style = MaterialTheme.typography.labelMedium,
-            color = nowPlayingSecondaryContentColor(isNowPlaying),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             modifier = Modifier.padding(start = 10.dp)
         )
@@ -1225,11 +1187,7 @@ private fun TrackArtistDurationLine(
 
 
 @Composable
-private fun TrackArtwork(
-    track: LibraryTrack,
-    isNowPlaying: Boolean = false,
-    currentTrackIsPlaying: Boolean = false
-) {
+private fun TrackArtwork(track: LibraryTrack) {
     Box(
         modifier = Modifier
             .size(Dimensions.TRACK_THUMBNAIL)
@@ -1250,12 +1208,6 @@ private fun TrackArtwork(
                 imageVector = Icons.Rounded.MusicNote,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        if (isNowPlaying) {
-            NowPlayingArtworkOverlay(
-                isPlaying = currentTrackIsPlaying,
-                modifier = Modifier.align(Alignment.BottomEnd)
             )
         }
     }

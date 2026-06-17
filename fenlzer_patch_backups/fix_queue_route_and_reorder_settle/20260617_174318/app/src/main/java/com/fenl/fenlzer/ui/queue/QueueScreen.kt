@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -74,18 +73,12 @@ import coil3.compose.AsyncImage
 import com.fenl.fenlzer.data.repository.QueueTrackItem
 import com.fenl.fenlzer.playback.PlaybackUiState
 import com.fenl.fenlzer.ui.components.DragStepHandle
-import com.fenl.fenlzer.ui.components.NowPlayingArtworkOverlay
-import com.fenl.fenlzer.ui.components.NowPlayingStatusBadge
-import com.fenl.fenlzer.ui.components.nowPlayingContentColor
-import com.fenl.fenlzer.ui.components.nowPlayingRowColor
-import com.fenl.fenlzer.ui.components.nowPlayingSecondaryContentColor
 import com.fenl.fenlzer.ui.theme.Dimensions
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import androidx.compose.ui.layout.ContentScale
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.fenl.fenlzer.data.repository.QueueListEditor
 
@@ -138,24 +131,12 @@ fun QueueScreen(
     val sourceIds = sourceItems.map { it.queueItemId }
     val sourceIdSet = sourceIds.toSet()
 
-    LaunchedEffect(sourceIds.joinToString("|"), pendingOrderIds) {
+    LaunchedEffect(sourceIds.joinToString("|")) {
         val pending = pendingOrderIds
         if (pending != null) {
             when {
+                pending == sourceIds -> pendingOrderIds = null
                 pending.toSet() != sourceIdSet -> pendingOrderIds = null
-                pending == sourceIds -> {
-                    // applyQueueResult() updates the UI optimistically, then the
-                    // Room-backed queue flow can still deliver one or more stale
-                    // or mixed emissions from the replace transaction. If the
-                    // optimistic order is cleared immediately, long drag moves can
-                    // flicker between the old and new positions. Keep the pending
-                    // display order briefly; this effect is cancelled if another
-                    // source order arrives during the settling window.
-                    delay(450L)
-                    if (pendingOrderIds == pending) {
-                        pendingOrderIds = null
-                    }
-                }
             }
         }
     }
@@ -369,7 +350,6 @@ fun QueueScreen(
                             QueueRow(
                                 item = item,
                                 isCurrent = isCurrent,
-                                currentTrackIsPlaying = playbackState.isPlaying,
                                 isQueueDragActive = draggingQueueItemId != null,
                                 isDragging = isDragging,
                                 dragOffsetPx = visualQueueRowOffsetPx(
@@ -655,7 +635,6 @@ private fun EmptyQueueState(modifier: Modifier = Modifier) {
 private fun QueueRow(
     item: QueueTrackItem,
     isCurrent: Boolean,
-    currentTrackIsPlaying: Boolean = false,
     isQueueDragActive: Boolean,
     isDragging: Boolean,
     dragOffsetPx: Float,
@@ -738,7 +717,13 @@ private fun QueueRow(
                 .fillMaxWidth()
                 .height(QueueRowHeight)
                 .graphicsLayer { translationX = if (isQueueDragActive) 0f else swipeOffsetX }
-                .background(nowPlayingRowColor(isNowPlaying = isCurrent)),
+                .background(
+                    if (isCurrent) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    }
+                ),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(
@@ -768,11 +753,7 @@ private fun QueueRow(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                QueueThumbnail(
-                    item = item,
-                    isCurrent = isCurrent,
-                    currentTrackIsPlaying = currentTrackIsPlaying
-                )
+                QueueThumbnail(item = item, isCurrent = isCurrent)
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -784,21 +765,18 @@ private fun QueueRow(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                        color = nowPlayingContentColor(isCurrent)
+                        color = if (isCurrent) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = queueSubtitle(item),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = nowPlayingSecondaryContentColor(isCurrent),
-                            modifier = Modifier.weight(1f)
-                        )
-                        if (isCurrent) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                            NowPlayingStatusBadge(isPlaying = currentTrackIsPlaying)
+                    Text(
+                        text = queueSubtitle(item),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = if (isCurrent) {
+                            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f)
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
                         }
-                    }
+                    )
                 }
             }
 
@@ -824,8 +802,7 @@ private fun QueueRow(
 @Composable
 private fun QueueThumbnail(
     item: QueueTrackItem,
-    isCurrent: Boolean,
-    currentTrackIsPlaying: Boolean = false
+    isCurrent: Boolean
 ) {
     Box(
         modifier = Modifier
@@ -852,16 +829,10 @@ private fun QueueThumbnail(
                 imageVector = Icons.Rounded.MusicNote,
                 contentDescription = null,
                 tint = if (isCurrent) {
-                    nowPlayingContentColor(true)
+                    MaterialTheme.colorScheme.onPrimaryContainer
                 } else {
                     MaterialTheme.colorScheme.onSurfaceVariant
                 }
-            )
-        }
-        if (isCurrent) {
-            NowPlayingArtworkOverlay(
-                isPlaying = currentTrackIsPlaying,
-                modifier = Modifier.align(Alignment.BottomEnd)
             )
         }
     }

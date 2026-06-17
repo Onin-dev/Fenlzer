@@ -448,10 +448,7 @@ class FenlzerMediaService : MediaLibraryService() {
                     "OFF" -> Player.REPEAT_MODE_OFF
                     else -> Player.REPEAT_MODE_ALL
                 }
-                // The persisted queue is already physically ordered for shuffle.
-                // Keep Media3 shuffle disabled so service resumption and car playback
-                // follow the same order shown by the app Queue screen.
-                exoPlayer.shuffleModeEnabled = false
+                exoPlayer.shuffleModeEnabled = queue.shuffleEnabled
                 exoPlayer.prepare()
                 exoPlayer.playWhenReady = false
                 refreshFavouriteButton()
