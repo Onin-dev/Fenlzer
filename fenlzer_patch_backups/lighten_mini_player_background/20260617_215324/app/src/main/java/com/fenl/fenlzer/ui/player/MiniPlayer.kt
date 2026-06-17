@@ -135,7 +135,7 @@ fun MiniPlayer(
         0f
     }
     val backgroundColor = rememberAverageThumbnailColor(currentItem.thumbnailUri)
-    val surfaceColor = backgroundColor.miniPlaybackTone()
+    val surfaceColor = backgroundColor.darkPlaybackTone()
     val dragProgress = (abs(dragX) / swipeThresholdPx).coerceIn(0f, 1f)
     val trackText = MiniTrackText(
         queueItemId = currentItem.queueItemId,
@@ -256,7 +256,7 @@ fun MiniPlayer(
                 Box(
                     modifier = Modifier
                         .matchParentSize()
-                        .background(surfaceColor.copy(alpha = if (currentItem.thumbnailUri == null) 1f else MiniArtworkScrimAlpha))
+                        .background(surfaceColor.copy(alpha = if (currentItem.thumbnailUri == null) 1f else 0.76f))
                 )
                 Box(
                     modifier = Modifier
@@ -565,14 +565,11 @@ private suspend fun sampleAverageColor(context: Context, uri: Uri): Color? = wit
     }.getOrNull()
 }
 
-private fun Color.miniPlaybackTone(): Color =
+private fun Color.darkPlaybackTone(): Color =
     Color(
-        // Keep the mini player readable, but do not crush the artwork into an
-        // almost-black background. The small lift also helps very dark covers
-        // remain visible behind the scrim.
-        red = (red * 0.46f + 0.04f).coerceIn(0f, 1f),
-        green = (green * 0.46f + 0.04f).coerceIn(0f, 1f),
-        blue = (blue * 0.46f + 0.04f).coerceIn(0f, 1f),
+        red = (red * 0.34f).coerceIn(0f, 1f),
+        green = (green * 0.34f).coerceIn(0f, 1f),
+        blue = (blue * 0.34f).coerceIn(0f, 1f),
         alpha = 1f
     )
 
@@ -582,8 +579,6 @@ private data class MiniTrackText(
     val artist: String,
     val privateModeEnabled: Boolean
 )
-
-private const val MiniArtworkScrimAlpha = 0.56f
 
 private val MiniPlayerCardHeight = 84.dp
 private val MiniSwipeThreshold = 48.dp

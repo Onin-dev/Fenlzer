@@ -48,7 +48,6 @@ class FenlzerMediaService : MediaLibraryService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var positionJob: Job? = null
     private var carLibraryChangeJob: Job? = null
-    private var restoringPersistedQueueForSession = false
 
     private val serviceDatabaseDelegate = lazy { FenlzerDatabase.create(applicationContext) }
     private val serviceDatabase by serviceDatabaseDelegate
@@ -394,10 +393,6 @@ class FenlzerMediaService : MediaLibraryService() {
 
     private val playerListener = object : Player.Listener {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-            if (restoringPersistedQueueForSession) {
-                refreshFavouriteButton()
-                return
-            }
             val queueItemId = mediaItem?.mediaId
             if (queueItemId != null) {
                 serviceScope.launch {
@@ -415,11 +410,8 @@ class FenlzerMediaService : MediaLibraryService() {
 
         override fun onEvents(player: Player, events: Player.Events) {
             if (
-                !restoringPersistedQueueForSession &&
-                (
-                    events.contains(Player.EVENT_IS_PLAYING_CHANGED) ||
-                        events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED)
-                    )
+                events.contains(Player.EVENT_IS_PLAYING_CHANGED) ||
+                events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED)
             ) {
                 persistPlaybackState(player)
             }
@@ -433,44 +425,36 @@ class FenlzerMediaService : MediaLibraryService() {
     }
 
     private fun restorePersistedQueueForSession() {
-        restoringPersistedQueueForSession = true
         serviceScope.launch {
-            try {
-                val queue = queueRepository.snapshot()
-                val resumeItems = QueueMediaItemMapper.localResumeItems(queue) { item ->
-                    serviceArtworkCache.squareArtworkUriFor(
-                        sourceUri = item.remoteThumbnailUri ?: item.thumbnailUri,
-                        fallbackUri = item.thumbnailUri
-                    ) ?: item.thumbnailUri
-                }
-                if (resumeItems.mediaItems.isEmpty()) return@launch
+            val queue = queueRepository.snapshot()
+            val resumeItems = QueueMediaItemMapper.localResumeItems(queue) { item ->
+                serviceArtworkCache.squareArtworkUriFor(
+                    sourceUri = item.remoteThumbnailUri ?: item.thumbnailUri,
+                    fallbackUri = item.thumbnailUri
+                ) ?: item.thumbnailUri
+            }
+            if (resumeItems.mediaItems.isEmpty()) return@launch
 
-                withContext(Dispatchers.Main.immediate) {
-                    val exoPlayer = player ?: return@withContext
-                    if (exoPlayer.mediaItemCount > 0) return@withContext
-                    exoPlayer.setMediaItems(
-                        resumeItems.mediaItems,
-                        resumeItems.startIndex,
-                        resumeItems.startPositionMs
-                    )
-                    exoPlayer.repeatMode = when (queue.repeatMode) {
-                        "ONE" -> Player.REPEAT_MODE_ONE
-                        "OFF" -> Player.REPEAT_MODE_OFF
-                        else -> Player.REPEAT_MODE_ALL
-                    }
-                    // The persisted queue is already physically ordered for shuffle.
-                    // Keep Media3 shuffle disabled so service resumption and car playback
-                    // follow the same order shown by the app Queue screen.
-                    exoPlayer.shuffleModeEnabled = false
-                    exoPlayer.prepare()
-                    // This service-side restore is metadata-only. Do not autoplay here;
-                    // PlaybackController will use QueueState.wasPlaying to resume only
-                    // when the previous session was interrupted while playback was active.
-                    exoPlayer.playWhenReady = false
-                    refreshFavouriteButton()
+            withContext(Dispatchers.Main.immediate) {
+                val exoPlayer = player ?: return@withContext
+                if (exoPlayer.mediaItemCount > 0) return@withContext
+                exoPlayer.setMediaItems(
+                    resumeItems.mediaItems,
+                    resumeItems.startIndex,
+                    resumeItems.startPositionMs
+                )
+                exoPlayer.repeatMode = when (queue.repeatMode) {
+                    "ONE" -> Player.REPEAT_MODE_ONE
+                    "OFF" -> Player.REPEAT_MODE_OFF
+                    else -> Player.REPEAT_MODE_ALL
                 }
-            } finally {
-                restoringPersistedQueueForSession = false
+                // The persisted queue is already physically ordered for shuffle.
+                // Keep Media3 shuffle disabled so service resumption and car playback
+                // follow the same order shown by the app Queue screen.
+                exoPlayer.shuffleModeEnabled = false
+                exoPlayer.prepare()
+                exoPlayer.playWhenReady = false
+                refreshFavouriteButton()
             }
         }
     }
@@ -525,9 +509,7 @@ class FenlzerMediaService : MediaLibraryService() {
         if (positionJob != null) return
         positionJob = serviceScope.launch {
             while (true) {
-                if (!restoringPersistedQueueForSession) {
-                    player?.let(::persistPlaybackState)
-                }
+                player?.let(::persistPlaybackState)
                 delay(POSITION_PERSIST_INTERVAL_MS)
             }
         }
@@ -573,7 +555,6 @@ class FenlzerMediaService : MediaLibraryService() {
     }
 
     private fun persistPlaybackState(player: Player) {
-        if (restoringPersistedQueueForSession) return
         val mediaId = player.currentMediaItem?.mediaId
         serviceScope.launch {
             if (mediaId != null) {
