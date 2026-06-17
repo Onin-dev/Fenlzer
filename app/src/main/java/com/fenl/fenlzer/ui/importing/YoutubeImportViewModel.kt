@@ -175,13 +175,12 @@ class YoutubeImportViewModel(
 
     fun selectAllPlaylistItems() {
         mutableUiState.update { current ->
-            val selectableIds = current.playlistPreview
-                ?.items
-                ?.filter { item -> item.isSelectablePlaylistItem() }
-                ?.map { item -> item.remoteItemId }
-                ?.toSet()
-                .orEmpty()
-            current.copy(selectedPlaylistRemoteItemIds = selectableIds)
+            current.copy(
+                selectedPlaylistRemoteItemIds = toggledPlaylistSelectAll(
+                    preview = current.playlistPreview,
+                    currentSelection = current.selectedPlaylistRemoteItemIds
+                )
+            )
         }
     }
 
@@ -477,6 +476,23 @@ private fun com.fenl.fenlzer.importing.youtube.YoutubePlaylistPreviewItem.isSele
     val normalizedAvailability = availability?.uppercase()
     return canDownload &&
         (normalizedAvailability == null || normalizedAvailability !in unavailablePlaylistStates)
+}
+
+internal fun toggledPlaylistSelectAll(
+    preview: YoutubePlaylistPreview?,
+    currentSelection: Set<String>
+): Set<String> {
+    val selectableIds = preview
+        ?.items
+        ?.filter { item -> item.isSelectablePlaylistItem() }
+        ?.map { item -> item.remoteItemId }
+        ?.toSet()
+        .orEmpty()
+    return if (selectableIds.isNotEmpty() && currentSelection.containsAll(selectableIds)) {
+        emptySet()
+    } else {
+        selectableIds
+    }
 }
 
 private val unavailablePlaylistStates = setOf("PRIVATE", "DELETED", "UNAVAILABLE")

@@ -79,6 +79,38 @@ class QueueRepository(
         replaceQueue(updatedState, edited.items, edited.message)
     }
 
+    suspend fun playNext(trackIds: List<String>): QueueCommandResult = withContext(dispatchers.io) {
+        val uniqueTrackIds = trackIds.filter { it.isNotBlank() }.distinct()
+        if (uniqueTrackIds.isEmpty()) {
+            return@withContext replaceQueue(
+                queueDao.getQueueState() ?: defaultQueueState(),
+                queueDao.getQueueItems(),
+                null
+            )
+        }
+        val state = queueDao.getQueueState() ?: defaultQueueState()
+        val edited = uniqueTrackIds.fold(
+            EditedQueue(
+                items = queueDao.getQueueItems(),
+                currentQueueItemId = state.currentQueueItemId,
+                changed = false,
+                message = null
+            )
+        ) { currentEdit, trackId ->
+            val nextEdit = QueueListEditor.playNext(
+                existingItems = currentEdit.items,
+                currentQueueItemId = currentEdit.currentQueueItemId,
+                newItem = newQueueItem(trackId, insertedBy = QueueListEditor.INSERTED_BY_PLAY_NEXT)
+            )
+            nextEdit.copy(
+                changed = currentEdit.changed || nextEdit.changed,
+                message = nextEdit.message ?: currentEdit.message
+            )
+        }
+        val updatedState = state.markModified(edited)
+        replaceQueue(updatedState, edited.items, edited.message)
+    }
+
     suspend fun addToQueue(trackId: String): QueueCommandResult = withContext(dispatchers.io) {
         val state = queueDao.getQueueState() ?: defaultQueueState()
         val edited = QueueListEditor.addToQueue(
@@ -86,6 +118,38 @@ class QueueRepository(
             currentQueueItemId = state.currentQueueItemId,
             newItem = newQueueItem(trackId, insertedBy = QueueListEditor.INSERTED_BY_ADD_TO_QUEUE)
         )
+        val updatedState = state.markModified(edited)
+        replaceQueue(updatedState, edited.items, edited.message)
+    }
+
+    suspend fun addToQueue(trackIds: List<String>): QueueCommandResult = withContext(dispatchers.io) {
+        val uniqueTrackIds = trackIds.filter { it.isNotBlank() }.distinct()
+        if (uniqueTrackIds.isEmpty()) {
+            return@withContext replaceQueue(
+                queueDao.getQueueState() ?: defaultQueueState(),
+                queueDao.getQueueItems(),
+                null
+            )
+        }
+        val state = queueDao.getQueueState() ?: defaultQueueState()
+        val edited = uniqueTrackIds.fold(
+            EditedQueue(
+                items = queueDao.getQueueItems(),
+                currentQueueItemId = state.currentQueueItemId,
+                changed = false,
+                message = null
+            )
+        ) { currentEdit, trackId ->
+            val nextEdit = QueueListEditor.addToQueue(
+                existingItems = currentEdit.items,
+                currentQueueItemId = currentEdit.currentQueueItemId,
+                newItem = newQueueItem(trackId, insertedBy = QueueListEditor.INSERTED_BY_ADD_TO_QUEUE)
+            )
+            nextEdit.copy(
+                changed = currentEdit.changed || nextEdit.changed,
+                message = nextEdit.message ?: currentEdit.message
+            )
+        }
         val updatedState = state.markModified(edited)
         replaceQueue(updatedState, edited.items, edited.message)
     }
@@ -428,8 +492,13 @@ class QueueRepository(
                         ?.let(thumbnailsById::get)
                         ?.internalFilename
                         ?.let { filename -> Uri.fromFile(File(storage.thumbnailsDir, filename)) }
-                    val thumbnailUri = localThumbnailUri ?: track.remoteThumbnailUrl?.let(Uri::parse)
-                    queueItem.toQueueTrackItem(track, thumbnailUri)
+                    val remoteThumbnailUri = track.remoteThumbnailUrl?.let(Uri::parse)
+                    val thumbnailUri = localThumbnailUri ?: remoteThumbnailUri
+                    queueItem.toQueueTrackItem(
+                        track = track,
+                        thumbnailUri = thumbnailUri,
+                        remoteThumbnailUri = remoteThumbnailUri
+                    )
                 } else {
                     val remoteItem = queueItem.remoteItemId?.let(remoteItemsById::get)
                         ?: return@mapNotNull null
@@ -441,7 +510,8 @@ class QueueRepository(
 
     private fun QueueItemEntity.toQueueTrackItem(
         track: TrackEntity,
-        thumbnailUri: Uri?
+        thumbnailUri: Uri?,
+        remoteThumbnailUri: Uri?
     ): QueueTrackItem {
         return QueueTrackItem(
             queueItemId = queueItemId,
@@ -457,7 +527,8 @@ class QueueRepository(
             insertedBy = insertedBy,
             isFavourite = track.isFavourite,
             audioUri = Uri.fromFile(File(storage.audioDir, track.internalFilename)),
-            thumbnailUri = thumbnailUri
+            thumbnailUri = thumbnailUri,
+            remoteThumbnailUri = remoteThumbnailUri
         )
     }
 
@@ -476,6 +547,7 @@ class QueueRepository(
             isFavourite = false,
             audioUri = remoteItem.lastPlayableUrl?.let(Uri::parse) ?: Uri.EMPTY,
             thumbnailUri = remoteItem.thumbnailUrl?.let(Uri::parse),
+            remoteThumbnailUri = remoteItem.thumbnailUrl?.let(Uri::parse),
             streamState = remoteItem.streamState,
             isRemote = true
         )
@@ -586,6 +658,7 @@ data class QueueTrackItem(
     val isFavourite: Boolean,
     val audioUri: Uri,
     val thumbnailUri: Uri?,
+    val remoteThumbnailUri: Uri? = null,
     val streamState: String? = null,
     val isRemote: Boolean = false
 )

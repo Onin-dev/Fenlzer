@@ -1,10 +1,16 @@
 package com.fenl.fenlzer.ui
 
+import android.content.Intent
 import android.content.res.Configuration
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -48,6 +54,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -84,10 +94,13 @@ import com.fenl.fenlzer.ui.metadata.SongDetailsSheet
 import com.fenl.fenlzer.ui.navigation.FenlzerRoute
 import com.fenl.fenlzer.ui.player.FullscreenPlayer
 import com.fenl.fenlzer.ui.player.MiniPlayer
+import com.fenl.fenlzer.ui.player.PlayerMorphOverlay
 import com.fenl.fenlzer.ui.playlists.PlaylistsScreen
 import com.fenl.fenlzer.ui.queue.QueueScreen
 import com.fenl.fenlzer.ui.stats.StatisticsScreen
+import com.fenl.fenlzer.playback.AndroidAudioOutputSwitcher
 import com.fenl.fenlzer.playback.PlaybackUiState
+import com.fenl.fenlzer.playback.PlaybackSharePayloadBuilder
 import kotlinx.coroutines.launch
 
 @Composable
@@ -212,6 +225,11 @@ private fun FenlzerScaffold(
     var thumbnailTrackId by remember { mutableStateOf<String?>(null) }
     var albumThumbnailRequest by remember { mutableStateOf<PendingAlbumThumbnail?>(null) }
     var pendingDetailsDelete by remember { mutableStateOf<PendingDeleteSong?>(null) }
+    var playerOverlayVisible by remember { mutableStateOf(false) }
+    var playerOverlayExpanded by remember { mutableStateOf(false) }
+    var playerOverlayManualProgress by remember { mutableStateOf<Float?>(null) }
+    var scaffoldBoundsInRoot by remember { mutableStateOf<Rect?>(null) }
+    var miniPlayerBoundsInRoot by remember { mutableStateOf<Rect?>(null) }
     val membershipTargetsFlow = remember(
         appGraph.playlistRepository,
         addToPlaylistTarget
@@ -240,10 +258,19 @@ private fun FenlzerScaffold(
         )
     }
 
-    fun openImportedBatchAddToPlaylist(trackIds: List<String>) {
+    fun openBatchAddToPlaylist(trackIds: List<String>, title: String) {
         val distinctIds = trackIds.distinct()
         if (distinctIds.isEmpty()) return
         addToPlaylistTarget = PendingPlaylistAction.ImportedBatch(
+            trackIds = distinctIds,
+            title = title
+        )
+    }
+
+    fun openImportedBatchAddToPlaylist(trackIds: List<String>) {
+        val distinctIds = trackIds.distinct()
+        if (distinctIds.isEmpty()) return
+        openBatchAddToPlaylist(
             trackIds = distinctIds,
             title = if (distinctIds.size == 1) "1 imported song" else "${distinctIds.size} imported songs"
         )
@@ -287,6 +314,48 @@ private fun FenlzerScaffold(
                 item.localTrackId != null -> openAddToPlaylist(item.localTrackId, item.displayTitle)
                 item.remoteItemId != null -> openRemoteAddToPlaylist(item.remoteItemId, item.displayTitle)
             }
+        }
+    }
+
+    fun openAudioOutput() {
+        val shown = AndroidAudioOutputSwitcher.show(context)
+        if (!shown) {
+            Toast.makeText(
+                context,
+                "Audio output switching is not available on this device.",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    fun shareCurrentItem() {
+        val currentItem = playbackState.currentItem ?: return
+        coroutineScope.launch {
+            val payload = when {
+                currentItem.localTrackId != null -> {
+                    appGraph.database
+                        ?.trackDao()
+                        ?.getTrack(currentItem.localTrackId)
+                        ?.let(PlaybackSharePayloadBuilder::localTrack)
+                }
+                currentItem.remoteItemId != null -> {
+                    appGraph.database
+                        ?.remoteDiscoverDao()
+                        ?.getRemoteItem(currentItem.remoteItemId)
+                        ?.let(PlaybackSharePayloadBuilder::remoteItem)
+                }
+                else -> null
+            }
+            if (payload.isNullOrBlank()) {
+                Toast.makeText(context, "Fenlzer could not share this song.", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val sendIntent = Intent(Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(Intent.EXTRA_TEXT, payload)
+            context.startActivity(
+                Intent.createChooser(sendIntent, "Share song")
+            )
         }
     }
 
@@ -389,9 +458,15 @@ private fun FenlzerScaffold(
     }
 
     fun openPlayer() {
-        navController.navigate(FenlzerRoute.Player.route) {
-            launchSingleTop = true
-        }
+        if (!playbackState.hasCurrentItem) return
+        playerOverlayManualProgress = null
+        playerOverlayVisible = true
+        playerOverlayExpanded = true
+    }
+
+    fun minimizePlayer() {
+        playerOverlayManualProgress = null
+        playerOverlayExpanded = false
     }
 
     fun closeQueue() {
@@ -508,132 +583,253 @@ private fun FenlzerScaffold(
         }
     }
 
-    Scaffold(
-        modifier = modifier.fillMaxSize(),
-        topBar = {
-            if (!hideTopBar) {
-                FenlzerTopBar(
-                    currentRoute = currentRoute,
-                    onBack = { navController.popBackStack() },
-                    onSettings = onSettingsRequested,
-                    onStats = onStatsRequested
-                )
+    val localMiniPlayerBounds = remember(scaffoldBoundsInRoot, miniPlayerBoundsInRoot) {
+        val scaffoldBounds = scaffoldBoundsInRoot
+        val miniBounds = miniPlayerBoundsInRoot
+        if (scaffoldBounds != null && miniBounds != null) {
+            Rect(
+                left = miniBounds.left - scaffoldBounds.left,
+                top = miniBounds.top - scaffoldBounds.top,
+                right = miniBounds.right - scaffoldBounds.left,
+                bottom = miniBounds.bottom - scaffoldBounds.top
+            )
+        } else {
+            null
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .onGloballyPositioned { coordinates ->
+                scaffoldBoundsInRoot = coordinates.boundsInRoot()
             }
-        },
-        bottomBar = {
-            if (!hidesAppChrome && !isKeyboardVisible) {
-                Column {
-                if (currentRoute != FenlzerRoute.Import.route && runningImportCount > 0) {
-                    RunningImportsBanner(
-                        count = runningImportCount,
-                        onClick = ::openActiveImports
-                    )
-                }
-                MiniPlayer(
-                    playbackState = playbackState,
-                    privateModeEnabled = privateModeEnabled,
-                    onMainAreaClick = {
-                        if (playbackState.hasCurrentItem) {
-                            openPlayer()
-                        } else {
-                            onImportRequested()
-                        }
-                    },
-                    onToggleFavourite = ::toggleCurrentFavourite,
-                    onPlayPause = { appGraph.playbackController?.togglePlayPause() },
-                    onNext = { appGraph.playbackController?.skipNext() },
-                    onSeekTo = { positionMs -> appGraph.playbackController?.seekTo(positionMs) },
-                    onAddToPlaylist = ::openCurrentAddToPlaylist,
-                    onOpenSongDetails = {
-                        playbackState.currentItem?.localTrackId?.let(::openSongDetails)
-                    },
-                    onEditMetadata = {
-                        playbackState.currentItem?.localTrackId?.let(::openMetadataEditor)
-                    },
-                    onOpenQueue = ::openQueue,
-                    onOpenSleepTimer = ::openPlayer,
-                    modifier = Modifier.testTag("miniPlayer")
-                )
-                if (showBottomNavigation) {
-                    FenlzerBottomNavigation(
+    ) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            topBar = {
+                if (!hideTopBar) {
+                    FenlzerTopBar(
                         currentRoute = currentRoute,
-                        onTabSelected = onTabSelected,
-                        modifier = Modifier.testTag("bottomNavigation")
+                        onBack = { navController.popBackStack() },
+                        onSettings = onSettingsRequested,
+                        onStats = onStatsRequested
                     )
                 }
+            },
+            bottomBar = {
+                if (!hidesAppChrome && !isKeyboardVisible) {
+                    Column {
+                    if (currentRoute != FenlzerRoute.Import.route && runningImportCount > 0) {
+                        RunningImportsBanner(
+                            count = runningImportCount,
+                            onClick = ::openActiveImports
+                        )
+                    }
+                    MiniPlayer(
+                        playbackState = playbackState,
+                        privateModeEnabled = privateModeEnabled,
+                        onMainAreaClick = {
+                            if (playbackState.hasCurrentItem) {
+                                openPlayer()
+                            } else {
+                                onImportRequested()
+                            }
+                        },
+                        onToggleFavourite = ::toggleCurrentFavourite,
+                        onPlayPause = { appGraph.playbackController?.togglePlayPause() },
+                        onPrevious = { appGraph.playbackController?.previous() },
+                        onNext = { appGraph.playbackController?.skipNext() },
+                        onSeekTo = { positionMs -> appGraph.playbackController?.seekTo(positionMs) },
+                        onAddToPlaylist = ::openCurrentAddToPlaylist,
+                        onOpenSongDetails = {
+                            playbackState.currentItem?.localTrackId?.let(::openSongDetails)
+                        },
+                        onEditMetadata = {
+                            playbackState.currentItem?.localTrackId?.let(::openMetadataEditor)
+                        },
+                        onOpenQueue = ::openQueue,
+                        onOpenSleepTimer = ::openPlayer,
+                        onOpenDragStart = {
+                            if (playbackState.hasCurrentItem) {
+                                playerOverlayVisible = true
+                                playerOverlayExpanded = false
+                                playerOverlayManualProgress = 0f
+                            }
+                        },
+                        onOpenDragProgress = { progress ->
+                            if (playbackState.hasCurrentItem) {
+                                playerOverlayManualProgress = progress
+                            }
+                        },
+                        onOpenDragEnd = { shouldExpand ->
+                            if (playbackState.hasCurrentItem) {
+                                val currentProgress = playerOverlayManualProgress ?: 0f
+                                playerOverlayManualProgress = null
+                                if (shouldExpand || currentProgress >= 0.50f) {
+                                    playerOverlayExpanded = true
+                                } else {
+                                    playerOverlayExpanded = false
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .testTag("miniPlayer")
+                            .onGloballyPositioned { coordinates ->
+                                miniPlayerBoundsInRoot = coordinates.boundsInRoot()
+                            }
+                            .graphicsLayer {
+                                alpha = if (playerOverlayVisible) 0f else 1f
+                            }
+                    )
+                    if (showBottomNavigation) {
+                        FenlzerBottomNavigation(
+                            currentRoute = currentRoute,
+                            onTabSelected = onTabSelected,
+                            modifier = Modifier.testTag("bottomNavigation")
+                        )
+                    }
+                    }
+                }
+            }
+        ) { innerPadding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+            ) {
+                FenlzerNavHost(
+                    navController = navController,
+                    appGraph = appGraph,
+                    playbackState = playbackState,
+                    contentPadding = PaddingValues(),
+                    onImportRequested = onImportRequested,
+                    onSettingsRequested = onSettingsRequested,
+                    onStatsRequested = onStatsRequested,
+                    onCloseQueue = ::closeQueue,
+                    onOpenQueue = ::openQueue,
+                    onAddToPlaylist = ::openAddToPlaylist,
+                    onAddRemoteToPlaylist = ::openRemoteAddToPlaylist,
+                    onAddBatchToPlaylist = ::openBatchAddToPlaylist,
+                    onAddImportedBatchToPlaylist = ::openImportedBatchAddToPlaylist,
+                    onToggleCurrentFavourite = ::toggleCurrentFavourite,
+                    onAddCurrentToPlaylist = ::openCurrentAddToPlaylist,
+                    onOpenAudioOutput = ::openAudioOutput,
+                    onShareCurrentItem = ::shareCurrentItem,
+                    onOpenSongDetails = ::openSongDetails,
+                    onEditMetadata = ::openMetadataEditor,
+                    onChangeAlbumThumbnail = { albumKey, overwriteExistingCustom ->
+                        albumThumbnailRequest = PendingAlbumThumbnail(albumKey, overwriteExistingCustom)
+                        thumbnailLauncher.launch("image/*")
+                    },
+                    activeImportsRequestId = activeImportsRequestId
+                )
+
+                if (showQueuePanel) {
+                    QueueScreen(
+                        playbackState = playbackState,
+                        onBack = { showQueuePanel = false },
+                        onRemoveItem = { queueItemId ->
+                            appGraph.playbackController?.removeQueueItem(queueItemId)
+                        },
+                        onJumpToItem = { queueItemId ->
+                            appGraph.playbackController?.jumpToQueueItem(queueItemId)
+                        },
+                        onClearUpcoming = {
+                            appGraph.playbackController?.clearUpcoming()
+                        },
+                        isPanel = true,
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .fillMaxHeight()
+                            .widthIn(min = 360.dp, max = 440.dp)
+                    ,
+                        onMoveItem = { queueItemId, offset ->
+                            appGraph.playbackController?.moveQueueItem(queueItemId, offset)
+                        },
+                        onShuffleQueue = {
+                            appGraph.playbackController?.shuffleQueue()
+                        },
+                        onShuffleUpcoming = {
+                            appGraph.playbackController?.shuffleUpcoming()
+                        },
+                        onSaveQueueAsPlaylist = { name ->
+                            coroutineScope.launch {
+                                val trackIds = playbackState.queueItems
+                                    .filterNot { it.isRemote }
+                                    .mapNotNull { it.localTrackId ?: it.trackId }
+                                    .distinct()
+                                if (trackIds.isNotEmpty()) {
+                                    appGraph.playlistRepository?.saveStaticPlaylist(name, trackIds)
+                                }
+                            }
+                        })
                 }
             }
         }
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            FenlzerNavHost(
-                navController = navController,
-                appGraph = appGraph,
-                playbackState = playbackState,
-                contentPadding = PaddingValues(),
-                onImportRequested = onImportRequested,
-                onSettingsRequested = onSettingsRequested,
-                onStatsRequested = onStatsRequested,
-                onCloseQueue = ::closeQueue,
-                onOpenQueue = ::openQueue,
-                onAddToPlaylist = ::openAddToPlaylist,
-                onAddRemoteToPlaylist = ::openRemoteAddToPlaylist,
-                onAddImportedBatchToPlaylist = ::openImportedBatchAddToPlaylist,
-                onToggleCurrentFavourite = ::toggleCurrentFavourite,
-                onAddCurrentToPlaylist = ::openCurrentAddToPlaylist,
-                onOpenSongDetails = ::openSongDetails,
-                onEditMetadata = ::openMetadataEditor,
-                onChangeAlbumThumbnail = { albumKey, overwriteExistingCustom ->
-                    albumThumbnailRequest = PendingAlbumThumbnail(albumKey, overwriteExistingCustom)
-                    thumbnailLauncher.launch("image/*")
-                },
-                activeImportsRequestId = activeImportsRequestId
-            )
 
-            if (showQueuePanel) {
-                QueueScreen(
-                    playbackState = playbackState,
-                    onBack = { showQueuePanel = false },
-                    onRemoveItem = { queueItemId ->
-                        appGraph.playbackController?.removeQueueItem(queueItemId)
-                    },
-                    onJumpToItem = { queueItemId ->
-                        appGraph.playbackController?.jumpToQueueItem(queueItemId)
-                    },
-                    onClearUpcoming = {
-                        appGraph.playbackController?.clearUpcoming()
-                    },
-                    isPanel = true,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .fillMaxHeight()
-                        .widthIn(min = 360.dp, max = 440.dp)
-                ,
-                    onMoveItem = { queueItemId, offset ->
-                        coroutineScope.launch { appGraph.queueRepository?.moveQueueItem(queueItemId, offset) }
-                    },
-                    onShuffleQueue = {
-                        coroutineScope.launch { appGraph.queueRepository?.shuffleQueue() }
-                    },
-                    onShuffleUpcoming = {
-                        coroutineScope.launch { appGraph.queueRepository?.shuffleUpcoming() }
-                    },
-                    onSaveQueueAsPlaylist = { name ->
-                        coroutineScope.launch {
-                            val trackIds = playbackState.queueItems
-                                .filterNot { it.isRemote }
-                                .mapNotNull { it.localTrackId ?: it.trackId }
-                                .distinct()
-                            if (trackIds.isNotEmpty()) {
-                                appGraph.playlistRepository?.saveStaticPlaylist(name, trackIds)
-                            }
-                        }
-                    })
-            }
+        if (playerOverlayVisible) {
+            PlayerMorphOverlay(
+                playbackState = playbackState,
+                privateModeEnabled = privateModeEnabled,
+                sleepTimerDefaultMinutes = scaffoldSettings.sleepTimerDefaultMinutes,
+                expanded = playerOverlayExpanded,
+                manualProgress = playerOverlayManualProgress,
+                miniPlayerBounds = localMiniPlayerBounds,
+                onCollapsed = {
+                    playerOverlayManualProgress = null
+                    playerOverlayVisible = false
+                },
+                onMinimize = ::minimizePlayer,
+                onToggleFavourite = ::toggleCurrentFavourite,
+                onPlayPause = { appGraph.playbackController?.togglePlayPause() },
+                onPrevious = { appGraph.playbackController?.previous() },
+                onNext = { appGraph.playbackController?.skipNext() },
+                onSeekTo = { positionMs -> appGraph.playbackController?.seekTo(positionMs) },
+                onToggleRepeat = { appGraph.playbackController?.cycleRepeatMode() },
+                onToggleShuffle = { appGraph.playbackController?.toggleShuffle() },
+                onAddToPlaylist = ::openCurrentAddToPlaylist,
+                onOpenAudioOutput = ::openAudioOutput,
+                onShare = ::shareCurrentItem,
+                onOpenSongDetails = {
+                    playbackState.currentItem?.localTrackId?.let(::openSongDetails)
+                },
+                onEditMetadata = {
+                    playbackState.currentItem?.localTrackId?.let(::openMetadataEditor)
+                },
+                onDeleteFromFenlzer = {
+                    val currentItem = playbackState.currentItem
+                    currentItem?.localTrackId?.let { trackId ->
+                        requestDetailsDelete(trackId, currentItem.displayTitle)
+                    }
+                },
+                onOpenQueue = ::openQueue,
+                onStartSleepTimerDuration = { durationMs ->
+                    appGraph.playbackController?.startSleepTimerDuration(durationMs)
+                },
+                onStartSleepTimerEndOfSong = {
+                    appGraph.playbackController?.startSleepTimerEndOfSong()
+                },
+                onStartSleepTimerEndOfQueue = {
+                    appGraph.playbackController?.startSleepTimerEndOfQueue()
+                },
+                onCancelSleepTimer = {
+                    appGraph.playbackController?.cancelSleepTimer()
+                },
+                onMinimizeDragStart = {
+                    playerOverlayVisible = true
+                    playerOverlayExpanded = true
+                    playerOverlayManualProgress = 1f
+                },
+                onMinimizeDragProgress = { closeProgress ->
+                    playerOverlayManualProgress = (1f - closeProgress).coerceIn(0.04f, 1f)
+                },
+                onMinimizeDragEnd = { shouldCollapse ->
+                    val currentProgress = playerOverlayManualProgress ?: 1f
+                    playerOverlayManualProgress = null
+                    playerOverlayExpanded = !(shouldCollapse || currentProgress <= 0.55f)
+                }
+            )
         }
     }
 }
@@ -651,9 +847,12 @@ private fun FenlzerNavHost(
     onOpenQueue: () -> Unit,
     onAddToPlaylist: (String, String) -> Unit,
     onAddRemoteToPlaylist: (String, String) -> Unit,
+    onAddBatchToPlaylist: (List<String>, String) -> Unit,
     onAddImportedBatchToPlaylist: (List<String>) -> Unit,
     onToggleCurrentFavourite: () -> Unit,
     onAddCurrentToPlaylist: () -> Unit,
+    onOpenAudioOutput: () -> Unit,
+    onShareCurrentItem: () -> Unit,
     onOpenSongDetails: (String) -> Unit,
     onEditMetadata: (String) -> Unit,
     onChangeAlbumThumbnail: (String, Boolean) -> Unit,
@@ -1021,11 +1220,24 @@ private fun FenlzerNavHost(
                 onPlayNext = { track ->
                     appGraph.playbackController?.playNext(track.trackId)
                 },
+                onPlayNextTracks = { selectedTracks ->
+                    appGraph.playbackController?.playNext(selectedTracks.map { track -> track.trackId })
+                },
                 onAddToQueue = { track ->
                     appGraph.playbackController?.addToQueue(track.trackId)
                 },
+                onAddTracksToQueue = { selectedTracks ->
+                    appGraph.playbackController?.addToQueue(selectedTracks.map { track -> track.trackId })
+                },
                 onAddToPlaylist = { track ->
                     onAddToPlaylist(track.trackId, track.displayTitle)
+                },
+                onAddTracksToPlaylist = { selectedTracks ->
+                    val trackIds = selectedTracks.map { track -> track.trackId }
+                    onAddBatchToPlaylist(
+                        trackIds,
+                        if (trackIds.size == 1) "1 selected song" else "${trackIds.size} selected songs"
+                    )
                 },
                 onToggleFavourite = { track ->
                     appGraph.trackRepository?.let { repository ->
@@ -1159,8 +1371,14 @@ private fun FenlzerNavHost(
                 onPlayNext = { trackId ->
                     appGraph.playbackController?.playNext(trackId)
                 },
+                onPlayNextTracks = { trackIds ->
+                    appGraph.playbackController?.playNext(trackIds)
+                },
                 onAddToQueue = { trackId ->
                     appGraph.playbackController?.addToQueue(trackId)
+                },
+                onAddTracksToQueue = { trackIds ->
+                    appGraph.playbackController?.addToQueue(trackIds)
                 },
                 onToggleFavourite = { trackId, isFavourite ->
                     appGraph.trackRepository?.let { repository ->
@@ -1169,7 +1387,8 @@ private fun FenlzerNavHost(
                         }
                     }
                 },
-                onAddToPlaylist = onAddToPlaylist
+                onAddToPlaylist = onAddToPlaylist,
+                onAddTracksToPlaylist = onAddBatchToPlaylist
             )
         }
         composable(FenlzerRoute.Import.route) {
@@ -1240,13 +1459,13 @@ private fun FenlzerNavHost(
                 }
             ,
                 onMoveItem = { queueItemId, offset ->
-                    coroutineScope.launch { appGraph.queueRepository?.moveQueueItem(queueItemId, offset) }
+                    appGraph.playbackController?.moveQueueItem(queueItemId, offset)
                 },
                 onShuffleQueue = {
-                    coroutineScope.launch { appGraph.queueRepository?.shuffleQueue() }
+                    appGraph.playbackController?.shuffleQueue()
                 },
                 onShuffleUpcoming = {
-                    coroutineScope.launch { appGraph.queueRepository?.shuffleUpcoming() }
+                    appGraph.playbackController?.shuffleUpcoming()
                 },
                 onSaveQueueAsPlaylist = { name ->
                     coroutineScope.launch {
@@ -1291,7 +1510,33 @@ private fun FenlzerNavHost(
                 ?: remember { mutableStateOf(StatisticsSummary()) }
             StatisticsScreen(summary = summary)
         }
-        composable(FenlzerRoute.Player.route) {
+        composable(
+            route = FenlzerRoute.Player.route,
+            enterTransition = {
+                slideInVertically(
+                    animationSpec = tween(260),
+                    initialOffsetY = { it }
+                ) + fadeIn(animationSpec = tween(220))
+            },
+            exitTransition = {
+                slideOutVertically(
+                    animationSpec = tween(220),
+                    targetOffsetY = { it }
+                ) + fadeOut(animationSpec = tween(180))
+            },
+            popEnterTransition = {
+                slideInVertically(
+                    animationSpec = tween(260),
+                    initialOffsetY = { it }
+                ) + fadeIn(animationSpec = tween(220))
+            },
+            popExitTransition = {
+                slideOutVertically(
+                    animationSpec = tween(220),
+                    targetOffsetY = { it }
+                ) + fadeOut(animationSpec = tween(180))
+            }
+        ) {
             FullscreenPlayer(
                 playbackState = playbackState,
                 privateModeEnabled = appSettings.privateModeEnabledForSession,
@@ -1311,6 +1556,8 @@ private fun FenlzerNavHost(
                 onToggleRepeat = { appGraph.playbackController?.cycleRepeatMode() },
                 onToggleShuffle = { appGraph.playbackController?.toggleShuffle() },
                 onAddToPlaylist = onAddCurrentToPlaylist,
+                onOpenAudioOutput = onOpenAudioOutput,
+                onShare = onShareCurrentItem,
                 onOpenQueue = onOpenQueue,
                 onOpenSongDetails = {
                     playbackState.currentItem?.let { item ->

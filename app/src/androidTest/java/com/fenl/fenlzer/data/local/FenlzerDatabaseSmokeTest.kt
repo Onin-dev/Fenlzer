@@ -205,6 +205,32 @@ class FenlzerDatabaseSmokeTest {
     }
 
     @Test
+    fun bulkQueueActionsPersistEverySelectedTrackInOrder() = runTest {
+        listOf("track-1", "track-2", "track-3", "track-4").forEachIndexed { index, trackId ->
+            database.trackDao().insertTrack(track(trackId = trackId, audioHash = "hash-$index"))
+        }
+        val repository = QueueRepository(
+            queueDao = database.queueDao(),
+            trackDao = database.trackDao(),
+            storage = FenlzerStorage(ApplicationProvider.getApplicationContext()),
+            now = { 75L }
+        )
+
+        repository.playFromHome("track-1", searchActive = false)
+        val playNextResult = repository.playNext(listOf("track-2", "track-3"))
+        assertEquals(
+            listOf("track-1", "track-2", "track-3"),
+            playNextResult.queue.items.mapNotNull { it.localTrackId }
+        )
+
+        val addToQueueResult = repository.addToQueue(listOf("track-4", "track-2"))
+        assertEquals(
+            listOf("track-1", "track-3", "track-4", "track-2"),
+            addToQueueResult.queue.items.mapNotNull { it.localTrackId }
+        )
+    }
+
+    @Test
     fun deleteFromFenlzerRemovesFilesPlaylistRefsAndRepairsQueue() = runTest {
         val storage = FenlzerStorage(ApplicationProvider.getApplicationContext())
         storage.ensureDirectories()

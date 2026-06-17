@@ -102,6 +102,26 @@ class CarMediaLibraryTreeBuilderTest {
         assertTrue(tree.playableTracksFor(listOf("remote-item-id")).isEmpty())
     }
 
+    @Test
+    fun searchMatchesDownloadedTrackTitleArtistAndAlbumOnly() {
+        val tree = builder.build(
+            tracks = listOf(
+                track("title", title = "Night Drive", artist = "Fen", album = "Road"),
+                track("artist", title = "Song", artist = "Morning Arcade", album = "Album"),
+                track("album", title = "Track", artist = "Artist", album = "Evening Lights")
+            ),
+            playlists = emptyList(),
+            playlistTracks = emptyList(),
+            stats = emptyList(),
+            events = emptyList()
+        )
+
+        assertEquals(listOf(CarMediaIds.track("title")), tree.search("night", page = 0, pageSize = 20).map { it.mediaId })
+        assertEquals(listOf(CarMediaIds.track("artist")), tree.search("morning arcade", page = 0, pageSize = 20).map { it.mediaId })
+        assertEquals(listOf("album"), tree.searchTrackIds("evening"))
+        assertTrue(tree.search("missing", page = 0, pageSize = 20).isEmpty())
+    }
+
     private fun track(
         trackId: String,
         title: String,

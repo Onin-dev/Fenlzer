@@ -3,11 +3,12 @@ package com.fenl.fenlzer.playback
 import android.content.ComponentName
 import android.content.Context
 import android.net.Uri
+import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.fenl.fenlzer.data.repository.PersistentQueue
@@ -31,15 +32,17 @@ class PlaybackController(
     private val statsTracker: PlaybackStatsTracker? = null,
     private val remoteStreamResolver: RemoteStreamResolver? = null
 ) {
-    private val mutableUiState = MutableStateFlow(PlaybackUiState())
+    private val mutableUiState = MutableStateFlow(PlaybackUiState(isRestoringQueue = true))
     val uiState: StateFlow<PlaybackUiState> = mutableUiState.asStateFlow()
 
     private var mediaController: MediaController? = null
     private var restoredInitialQueue = false
     private var suppressTransitionSync = false
+    private var pendingQueueHandoffCurrentQueueItemId: String? = null
     private var positionJob: Job? = null
     private val retriedRemoteQueueItems = mutableSetOf<String>()
     private val sleepTimerController = SleepTimerController()
+    private val artworkCache = PlaybackArtworkCache(context.applicationContext)
 
     init {
         observeQueue()
@@ -61,9 +64,23 @@ class PlaybackController(
         }
     }
 
+    fun playNext(trackIds: List<String>) {
+        scope.launch {
+            val result = queueRepository.playNext(trackIds)
+            applyQueueResult(result, playWhenReady = false)
+        }
+    }
+
     fun addToQueue(trackId: String) {
         scope.launch {
             val result = queueRepository.addToQueue(trackId)
+            applyQueueResult(result, playWhenReady = false)
+        }
+    }
+
+    fun addToQueue(trackIds: List<String>) {
+        scope.launch {
+            val result = queueRepository.addToQueue(trackIds)
             applyQueueResult(result, playWhenReady = false)
         }
     }
@@ -377,13 +394,15 @@ fun startSleepTimerDuration(durationMs: Long) {
                         sourceLabel = queue.sourceLabel,
                         isModified = queue.isModified,
                         repeatMode = queue.repeatMode,
-                        shuffleEnabled = queue.shuffleEnabled
+                        shuffleEnabled = queue.shuffleEnabled,
+                        isRestoringQueue = false
                     )
                 }
             }
         }
     }
 
+    @OptIn(UnstableApi::class)
     private fun connectController() {
         val token = SessionToken(
             context,
@@ -449,6 +468,7 @@ fun startSleepTimerDuration(durationMs: Long) {
         val controller = mediaController ?: return
         val currentIndex = queue.items.indexOfFirst { it.queueItemId == queue.currentQueueItemId }
         if (queue.items.isEmpty() || currentIndex == -1) {
+            pendingQueueHandoffCurrentQueueItemId = null
             controller.stop()
             controller.clearMediaItems()
             queueRepository.persistPlaybackState(0L, wasPlaying = false)
@@ -460,9 +480,23 @@ fun startSleepTimerDuration(durationMs: Long) {
         suppressTransitionSync = true
         val desiredCurrentId = queue.currentQueueItemId
         val currentMediaId = controller.currentMediaItem?.mediaId
-        val playableQueue = queue.withResolvedRemoteStreamsAround(currentIndex)
-        val desiredMediaItems = playableQueue.items.map { it.toMediaItem() }
         val positionToRestore = positionMs.coerceAtLeast(0L)
+        pendingQueueHandoffCurrentQueueItemId = desiredCurrentId
+        previewQueueHandoff(
+            queue = queue,
+            playWhenReady = playWhenReady,
+            positionMs = positionToRestore
+        )
+        val playableQueue = queue.withResolvedRemoteStreamsAround(currentIndex)
+        val desiredMediaItems = playableQueue.items.map { item ->
+            QueueMediaItemMapper.mediaItemFor(
+                item = item,
+                artworkUri = artworkCache.cachedSquareArtworkUriFor(
+                    sourceUri = item.remoteThumbnailUri ?: item.thumbnailUri,
+                    fallbackUri = item.thumbnailUri
+                ) ?: item.thumbnailUri
+            )
+        }
 
         if (
             desiredCurrentId != null &&
@@ -497,6 +531,57 @@ fun startSleepTimerDuration(durationMs: Long) {
         )
         updateFromPlayer(controller)
         samplePlaybackStats(controller)
+        warmPlaybackArtworkForQueueWindow(playableQueue, currentIndex)
+    }
+
+    private fun previewQueueHandoff(
+        queue: PersistentQueue,
+        playWhenReady: Boolean,
+        positionMs: Long
+    ) {
+        mutableUiState.update { current ->
+            val previewCurrentItem = queue.currentItem
+            current.copy(
+                queueItems = queue.items,
+                currentItem = previewCurrentItem ?: current.currentItem,
+                sourceLabel = queue.sourceLabel,
+                isModified = queue.isModified,
+                repeatMode = queue.repeatMode,
+                shuffleEnabled = queue.shuffleEnabled,
+                playbackPositionMs = positionMs,
+                durationMs = previewCurrentItem?.durationMs ?: current.durationMs,
+                isPlaying = if (playWhenReady) current.isPlaying else false,
+                canSkipNext = queue.items.size > 1 || queue.repeatMode == QueueRepeatMode.ALL
+            )
+        }
+    }
+
+    private fun warmPlaybackArtworkForQueueWindow(queue: PersistentQueue, currentIndex: Int) {
+        val itemsToWarm = queue.items
+            .drop(currentIndex.coerceAtLeast(0))
+            .take(3)
+            .filter { item -> item.thumbnailUri != null || item.remoteThumbnailUri != null }
+        if (itemsToWarm.isEmpty()) return
+
+        scope.launch {
+            itemsToWarm.forEach { item ->
+                val artworkUri = artworkCache.squareArtworkUriFor(
+                    sourceUri = item.remoteThumbnailUri ?: item.thumbnailUri,
+                    fallbackUri = item.thumbnailUri
+                ) ?: return@forEach
+                val controller = mediaController ?: return@forEach
+                val index = controller.indexOfMediaItem(item.queueItemId)
+                if (index != -1) {
+                    controller.replaceMediaItemIfChanged(
+                        index = index,
+                        desiredItem = QueueMediaItemMapper.mediaItemFor(
+                            item = item,
+                            artworkUri = artworkUri
+                        )
+                    )
+                }
+            }
+        }
     }
 
     private suspend fun PersistentQueue.withResolvedRemoteStreamsAround(currentIndex: Int): PersistentQueue {
@@ -546,9 +631,9 @@ fun startSleepTimerDuration(durationMs: Long) {
                 currentIndex == -1 -> addMediaItem(desiredIndex, desiredItem)
                 currentIndex != desiredIndex -> {
                     moveMediaItem(currentIndex, desiredIndex)
-                    replaceMediaItemIfUriChanged(desiredIndex, desiredItem)
+                    replaceMediaItemIfChanged(desiredIndex, desiredItem)
                 }
-                else -> replaceMediaItemIfUriChanged(desiredIndex, desiredItem)
+                else -> replaceMediaItemIfChanged(desiredIndex, desiredItem)
             }
         }
 
@@ -557,50 +642,40 @@ fun startSleepTimerDuration(durationMs: Long) {
         }
     }
 
-    private fun MediaController.replaceMediaItemIfUriChanged(index: Int, desiredItem: MediaItem) {
-    if (index !in 0 until mediaItemCount) return
+    private fun MediaController.replaceMediaItemIfChanged(index: Int, desiredItem: MediaItem) {
+        if (index !in 0 until mediaItemCount) return
 
-    val currentItem = getMediaItemAt(index)
-    val currentUri = currentItem.localConfiguration?.uri
-    val desiredUri = desiredItem.localConfiguration?.uri
-    if (currentUri == desiredUri) return
+        val currentItem = getMediaItemAt(index)
+        val currentUri = currentItem.localConfiguration?.uri
+        val desiredUri = desiredItem.localConfiguration?.uri
+        val uriChanged = currentUri != desiredUri
+        val metadataChanged = currentItem.mediaMetadata != desiredItem.mediaMetadata
+        if (!uriChanged && !metadataChanged) return
 
-    val replacingCurrent = currentMediaItem?.mediaId == currentItem.mediaId
-    val positionBeforeReplace = currentPosition.coerceAtLeast(0L)
-    val playWhenReadyBeforeReplace = playWhenReady
-    val wasPlayingBeforeReplace = isPlaying
+        val replacingCurrent = currentMediaItem?.mediaId == currentItem.mediaId
+        if (uriChanged && replacingCurrent && (isPlaying || playWhenReady)) {
+            return
+        }
 
-    replaceMediaItem(index, desiredItem)
+        val positionBeforeReplace = currentPosition.coerceAtLeast(0L)
+        val playWhenReadyBeforeReplace = playWhenReady
+        val wasPlayingBeforeReplace = isPlaying
 
-    if (replacingCurrent) {
-        // When a remote streamed item becomes a local imported item, only the
-        // URI changes. Media3 may otherwise treat replaceMediaItem on the
-        // current item as a fresh source and restart it from 0.
-        seekTo(index, positionBeforeReplace)
-        playWhenReady = playWhenReadyBeforeReplace || wasPlayingBeforeReplace
+        replaceMediaItem(index, desiredItem)
+
+        if (replacingCurrent) {
+            seekTo(index, positionBeforeReplace)
+            playWhenReady = playWhenReadyBeforeReplace || wasPlayingBeforeReplace
+        }
     }
-}
 
-private fun MediaController.indexOfMediaItem(mediaId: String): Int {
+    private fun MediaController.indexOfMediaItem(mediaId: String): Int {
         for (index in 0 until mediaItemCount) {
             if (getMediaItemAt(index).mediaId == mediaId) {
                 return index
             }
         }
         return -1
-    }
-
-    private fun QueueTrackItem.toMediaItem(): MediaItem {
-        val metadata = MediaMetadata.Builder()
-            .setTitle(displayTitle)
-            .setArtist(artist)
-            .setArtworkUri(thumbnailUri)
-            .build()
-        return MediaItem.Builder()
-            .setMediaId(queueItemId)
-            .setUri(audioUri)
-            .setMediaMetadata(metadata)
-            .build()
     }
 
     private val playerListener = object : Player.Listener {
@@ -618,6 +693,7 @@ private fun MediaController.indexOfMediaItem(mediaId: String): Int {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             if (suppressTransitionSync || !restoredInitialQueue) return
             val queueItemId = mediaItem?.mediaId
+            if (queueItemId == null && pendingQueueHandoffCurrentQueueItemId != null) return
             val previousHadUpcoming = mutableUiState.value.upcomingCount > 0
             if (queueItemId != null) {
                 updateLiveCurrentFromMediaId(queueItemId)
@@ -802,18 +878,40 @@ private fun syncCurrentQueueItem(
         val duration = player.duration.takeIf { it > 0L } ?: 0L
         mutableUiState.update { current ->
             val mediaId = player.currentMediaItem?.mediaId
+            val pendingHandoffId = pendingQueueHandoffCurrentQueueItemId
+            val preserveCurrentDuringControllerHandoff =
+                current.queueItems.isNotEmpty() &&
+                    (
+                        player.mediaItemCount == 0 ||
+                            (pendingHandoffId != null && mediaId == null)
+                        )
             val currentItem = when {
-                player.mediaItemCount == 0 -> null
+                pendingHandoffId != null && (mediaId == null || mediaId == pendingHandoffId) -> {
+                    current.queueItems.firstOrNull { it.queueItemId == pendingHandoffId }
+                        ?: current.currentItem?.takeIf { item ->
+                            current.queueItems.any { it.queueItemId == item.queueItemId }
+                        }
+                }
+                preserveCurrentDuringControllerHandoff -> {
+                    current.currentItem?.takeIf { item ->
+                        current.queueItems.any { it.queueItemId == item.queueItemId }
+                    } ?: current.queueItems.firstOrNull { it.state == QueueListEditor.STATE_CURRENT }
+                }
                 mediaId != null -> current.queueItems.firstOrNull { it.queueItemId == mediaId }
                     ?: current.currentItem?.takeIf { it.queueItemId == mediaId }
                 else -> current.currentItem?.takeIf { item ->
                     current.queueItems.any { it.queueItemId == item.queueItemId }
                 }
             }
+            if (mediaId != null && mediaId == pendingHandoffId) {
+                pendingQueueHandoffCurrentQueueItemId = null
+            }
             current.copy(
                 currentItem = currentItem,
                 isPlaying = player.isPlaying,
-                playbackPositionMs = if (player.mediaItemCount == 0) {
+                playbackPositionMs = if (preserveCurrentDuringControllerHandoff) {
+                    current.playbackPositionMs
+                } else if (player.mediaItemCount == 0) {
                     0L
                 } else {
                     player.currentPosition.coerceAtLeast(0L)
@@ -892,7 +990,8 @@ data class PlaybackUiState(
     val repeatMode: String = QueueRepeatMode.ALL,
     val shuffleEnabled: Boolean = false,
     val sleepTimerState: SleepTimerState = SleepTimerState(),
-    val message: String? = null
+    val message: String? = null,
+    val isRestoringQueue: Boolean = false
 ) {
     val hasCurrentItem: Boolean
         get() = currentItem != null

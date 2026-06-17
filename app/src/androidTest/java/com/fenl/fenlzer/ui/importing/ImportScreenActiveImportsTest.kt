@@ -22,6 +22,7 @@ class ImportScreenActiveImportsTest {
     @Test
     fun activeImportsAreSplitIntoSectionsAndFailedJobsCanBeDismissed() {
         var dismissedJobId: String? = null
+        val retriedJobIds = mutableListOf<String>()
         composeRule.setContent {
             FenlzerTheme {
                 ImportScreen(
@@ -44,7 +45,7 @@ class ImportScreenActiveImportsTest {
                     onImportSelectedYoutubePlaylistItems = {},
                     onImportWholeYoutubePlaylist = {},
                     onCancelYoutubeImport = {},
-                    onRetryYoutubeImport = {},
+                    onRetryYoutubeImport = { retriedJobIds += it },
                     onMoveYoutubeImport = { _, _ -> },
                     onDismissYoutubeImport = { dismissedJobId = it },
                     onEnterActiveImports = {},
@@ -64,12 +65,16 @@ class ImportScreenActiveImportsTest {
             }
         }
 
-        composeRule.onNodeWithText("Downloading Now").assertIsDisplayed()
-        composeRule.onNodeWithText("Upcoming").assertIsDisplayed()
-        composeRule.onNodeWithText("Recently Finished").assertIsDisplayed()
+        composeRule.onNodeWithText("Running").assertIsDisplayed()
+        composeRule.onNodeWithText("Queued").assertIsDisplayed()
+        composeRule.onNodeWithText("Done").assertIsDisplayed()
+        composeRule.onNodeWithText("Failed").assertIsDisplayed()
         composeRule.onNodeWithText("running").assertIsDisplayed()
         composeRule.onNodeWithText("queued").assertIsDisplayed()
         composeRule.onNodeWithText("failed").assertIsDisplayed()
+
+        composeRule.onNodeWithText("Retry all").performClick()
+        assertEquals(listOf("failed"), retriedJobIds)
 
         composeRule.onNodeWithContentDescription("Dismiss failed import").performClick()
         assertEquals("failed", dismissedJobId)

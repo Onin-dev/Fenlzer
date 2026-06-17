@@ -99,6 +99,7 @@ class YoutubeImportRepository(
                     sourceLabel = job.sourceLabel(),
                     status = effectiveStatus,
                     progressPercent = compactStatus?.progressPercent ?: job.progressPercent,
+                    etaSeconds = compactStatus?.etaSeconds,
                     queuePosition = compactStatus?.queuePosition
                         ?: localQueuePositions[job.importJobId],
                     thumbnailUrl = remoteItem?.thumbnailUrl,

@@ -46,6 +46,7 @@ data class ActiveImportUiItem(
     val sourceLabel: String,
     val status: String,
     val progressPercent: Int?,
+    val etaSeconds: Long? = null,
     val queuePosition: Int?,
     val thumbnailUrl: String?,
     val errorMessage: String?,

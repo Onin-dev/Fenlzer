@@ -90,6 +90,7 @@ import com.fenl.fenlzer.data.repository.ArtistSummary
 import com.fenl.fenlzer.data.repository.LibraryTrack
 import com.fenl.fenlzer.data.settings.HomeSort
 import com.fenl.fenlzer.domain.text.SearchNormalizer
+import com.fenl.fenlzer.ui.components.FenlzerLoadingPlaceholder
 import java.util.Locale
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.material.icons.rounded.Close
@@ -115,8 +116,11 @@ fun HomeScreen(
     onChangeAlbumThumbnail: (String, Boolean) -> Unit,
     onTrackClick: (LibraryTrack, Boolean) -> Unit,
     onPlayNext: (LibraryTrack) -> Unit,
+    onPlayNextTracks: (List<LibraryTrack>) -> Unit,
     onAddToQueue: (LibraryTrack) -> Unit,
+    onAddTracksToQueue: (List<LibraryTrack>) -> Unit,
     onAddToPlaylist: (LibraryTrack) -> Unit,
+    onAddTracksToPlaylist: (List<LibraryTrack>) -> Unit,
     onToggleFavourite: (LibraryTrack) -> Unit,
     onOpenSongDetails: (LibraryTrack) -> Unit,
     onEditMetadata: (LibraryTrack) -> Unit,
@@ -227,18 +231,15 @@ fun HomeScreen(
                 onSelectAll = { selectedTrackIds = visibleTracks.map { it.trackId }.toSet() },
                 onClear = { selectedTrackIds = emptySet() },
                 onPlayNext = {
-                    visibleTracks
-                        .filter { it.trackId in selectedTrackIds }
-                        .forEach(onPlayNext)
+                    onPlayNextTracks(visibleTracks.filter { it.trackId in selectedTrackIds })
                     selectedTrackIds = emptySet()
                 },
                 onAddToQueue = {
-                    val selectedTracksSnapshot = visibleTracks.filter { track ->
-                        track.trackId in selectedTrackIds
-                    }
-                    selectedTracksSnapshot.forEach { track ->
-                        onAddToQueue(track)
-                    }
+                    onAddTracksToQueue(visibleTracks.filter { track -> track.trackId in selectedTrackIds })
+                    selectedTrackIds = emptySet()
+                },
+                onAddToPlaylist = {
+                    onAddTracksToPlaylist(visibleTracks.filter { track -> track.trackId in selectedTrackIds })
                     selectedTrackIds = emptySet()
                 },
                 onDelete = {
@@ -271,15 +272,6 @@ fun HomeScreen(
                 }
             )
             Spacer(modifier = Modifier.height(if (isLandscape) 4.dp else 8.dp))
-        }
-
-        if (false && isLandscape && !selectionMode && tracks.isNotEmpty() && mode == HomeMode.SONGS) {
-            LandscapeFilterStrip(
-                filter = filter,
-                onFilterSelected = { filter = it },
-                onOptions = { showOptions = true }
-            )
-            Spacer(modifier = Modifier.height(4.dp))
         }
 
         when {
@@ -1052,39 +1044,13 @@ private fun CompactSearchField(
 }
 
 @Composable
-private fun LandscapeFilterStrip(
-    filter: LibraryFilter,
-    onFilterSelected: (LibraryFilter) -> Unit,
-    onOptions: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(max = 38.dp)
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        LibraryFilter.entries.take(5).forEach { option ->
-            FilterChip(
-                selected = filter == option,
-                onClick = { onFilterSelected(option) },
-                label = { Text(text = option.label) }
-            )
-        }
-        TextButton(onClick = onOptions) {
-            Text(text = "More")
-        }
-    }
-}
-
-@Composable
 private fun SelectionBar(
     selectedCount: Int,
     onSelectAll: () -> Unit,
     onClear: () -> Unit,
     onPlayNext: () -> Unit,
     onAddToQueue: () -> Unit,
+    onAddToPlaylist: () -> Unit,
     onDelete: () -> Unit
 ) {
     Row(
@@ -1106,6 +1072,9 @@ private fun SelectionBar(
         }
         IconButton(onClick = onAddToQueue) {
             Icon(imageVector = Icons.Rounded.Queue, contentDescription = "Add to queue")
+        }
+        IconButton(onClick = onAddToPlaylist) {
+            Icon(imageVector = Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = "Add to playlist")
         }
         IconButton(onClick = onDelete) {
             Icon(imageVector = Icons.Rounded.Delete, contentDescription = "Delete selected")
@@ -1227,6 +1196,7 @@ private fun TrackArtwork(track: LibraryTrack) {
         contentAlignment = Alignment.Center
     ) {
         if (track.thumbnailUri != null) {
+            FenlzerLoadingPlaceholder(modifier = Modifier.fillMaxSize())
             AsyncImage(
                 model = track.thumbnailUri,
                 contentDescription = null,

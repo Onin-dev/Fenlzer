@@ -71,6 +71,7 @@ import com.fenl.fenlzer.importing.youtube.YoutubeImportOutcome
 import com.fenl.fenlzer.importing.youtube.YoutubePlaylistPreview
 import com.fenl.fenlzer.importing.youtube.YoutubePlaylistPreviewItem
 import com.fenl.fenlzer.importing.youtube.YoutubeSearchResultItem
+import com.fenl.fenlzer.ui.components.FenlzerLoadingPlaceholder
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -215,6 +216,11 @@ fun ImportScreen(
                     importError = youtubeState.importError,
                     onCancelImport = onCancelYoutubeImport,
                     onRetryImport = onRetryYoutubeImport,
+                    onRetryAllImports = {
+                        youtubeState.activeJobs
+                            .filter { it.retryable }
+                            .forEach { onRetryYoutubeImport(it.importJobId) }
+                    },
                     onMoveImport = onMoveYoutubeImport,
                     onDismissImport = onDismissYoutubeImport,
                     onOpenSongDetails = onOpenSongDetails,
@@ -558,6 +564,7 @@ private fun YoutubeSearchPanel(
 
         if (state.isSearching) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            LoadingResultPlaceholders()
         }
 
         state.searchError?.let { error ->
@@ -635,6 +642,7 @@ private fun YoutubePlaylistPanel(
 
         if (state.playlistLoading) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            LoadingResultPlaceholders()
         }
 
         state.playlistError?.let { error ->
@@ -841,6 +849,49 @@ private fun PlaylistPreviewRow(
 }
 
 @Composable
+private fun LoadingResultPlaceholders(
+    count: Int = 3
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        repeat(count) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.45f),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                    .padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                FenlzerLoadingPlaceholder(
+                    modifier = Modifier.size(width = 76.dp, height = 52.dp)
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FenlzerLoadingPlaceholder(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(14.dp)
+                    )
+                    FenlzerLoadingPlaceholder(
+                        modifier = Modifier
+                            .fillMaxWidth(0.62f)
+                            .height(12.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun YoutubeSearchResultRow(
     result: YoutubeSearchResultItem,
     importing: Boolean,
@@ -963,6 +1014,7 @@ private fun ActiveImportsPanel(
     importError: String?,
     onCancelImport: (String) -> Unit,
     onRetryImport: (String) -> Unit,
+    onRetryAllImports: () -> Unit,
     onMoveImport: (String, Int) -> Unit,
     onDismissImport: (String) -> Unit,
     onOpenSongDetails: (String) -> Unit,
@@ -977,11 +1029,24 @@ private fun ActiveImportsPanel(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text(
-            text = "Active Imports",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "Active Imports",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
+            if (activeJobs.any { it.retryable }) {
+                OutlinedButton(onClick = onRetryAllImports) {
+                    Icon(imageVector = Icons.Rounded.Refresh, contentDescription = null)
+                    Text(text = "Retry all", modifier = Modifier.padding(start = 8.dp))
+                }
+            }
+        }
         if (activeJobs.isEmpty()) {
             Text(
                 text = "No imports running.",
@@ -989,35 +1054,48 @@ private fun ActiveImportsPanel(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         } else {
-            val upcoming = activeJobs.filter { it.status == "QUEUED" }
-            val finished = activeJobs.filter { it.status.isTerminalImportStatus() }
-            val downloading = activeJobs - upcoming.toSet() - finished.toSet()
+            val queued = activeJobs.filter { it.status == "QUEUED" }
+            val failed = activeJobs.filter { it.status.isFailedImportStatus() }
+            val done = activeJobs.filter { it.status.isSuccessfulImportStatus() }
+            val running = activeJobs - queued.toSet() - failed.toSet() - done.toSet()
+            ActiveImportDashboardStats(
+                running = running.size,
+                queued = queued.size,
+                done = done.size,
+                failed = failed.size
+            )
             ActiveImportSection(
-                title = "Downloading Now",
-                jobs = downloading,
+                title = "Running",
+                jobs = running,
                 onCancelImport = onCancelImport,
                 onRetryImport = onRetryImport,
                 onMoveImport = onMoveImport,
                 onDismissImport = onDismissImport
             )
             ActiveImportSection(
-                title = "Upcoming",
-                jobs = upcoming,
+                title = "Queued",
+                jobs = queued,
                 onCancelImport = onCancelImport,
                 onRetryImport = onRetryImport,
                 onMoveImport = onMoveImport,
                 onDismissImport = onDismissImport
             )
-            if (finished.isNotEmpty()) {
-                ActiveImportSection(
-                    title = "Recently Finished",
-                    jobs = finished,
-                    onCancelImport = onCancelImport,
-                    onRetryImport = onRetryImport,
-                    onMoveImport = onMoveImport,
-                    onDismissImport = onDismissImport
-                )
-            }
+            ActiveImportSection(
+                title = "Done",
+                jobs = done,
+                onCancelImport = onCancelImport,
+                onRetryImport = onRetryImport,
+                onMoveImport = onMoveImport,
+                onDismissImport = onDismissImport
+            )
+            ActiveImportSection(
+                title = "Failed",
+                jobs = failed,
+                onCancelImport = onCancelImport,
+                onRetryImport = onRetryImport,
+                onMoveImport = onMoveImport,
+                onDismissImport = onDismissImport
+            )
         }
         importError?.let { error ->
             Text(
@@ -1035,6 +1113,44 @@ private fun ActiveImportsPanel(
                 onClear = onClearYoutubeResult
             )
         }
+    }
+}
+
+@Composable
+private fun ActiveImportDashboardStats(
+    running: Int,
+    queued: Int,
+    done: Int,
+    failed: Int
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        ImportDashboardChip(label = "Running", value = running)
+        ImportDashboardChip(label = "Queued", value = queued)
+        ImportDashboardChip(label = "Done", value = done)
+        ImportDashboardChip(label = "Failed", value = failed)
+    }
+}
+
+@Composable
+private fun ImportDashboardChip(
+    label: String,
+    value: Int
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.64f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(50)
+    ) {
+        Text(
+            text = "$label $value",
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+        )
     }
 }
 
@@ -1236,6 +1352,17 @@ private fun String.isTerminalImportStatus(): Boolean = this in setOf(
     "COMPLETED",
     "TRANSFER_CONFIRMED",
     "DUPLICATE",
+    "FAILED",
+    "CANCELLED"
+)
+
+private fun String.isSuccessfulImportStatus(): Boolean = this in setOf(
+    "COMPLETED",
+    "TRANSFER_CONFIRMED",
+    "DUPLICATE"
+)
+
+private fun String.isFailedImportStatus(): Boolean = this in setOf(
     "FAILED",
     "CANCELLED"
 )
@@ -1566,6 +1693,8 @@ private fun activeImportSubtitle(job: ActiveImportUiItem): String =
     listOfNotNull(
         job.sourceLabel,
         job.status.labelForImport(),
+        job.progressPercent?.takeIf { it in 1..99 }?.let { "$it%" },
+        job.etaSeconds?.takeIf { it > 0 }?.let { "ETA ${it.formatEta()}" },
         job.queuePosition?.let { "queue #$it" },
         job.attemptCount.takeIf { it > 0 }?.let { "attempt $it/${job.maxAttempts}" }
     ).joinToString(" - ")
@@ -1623,6 +1752,16 @@ private fun Long.formatDuration(): String {
         String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
     } else {
         String.format(Locale.US, "%d:%02d", minutes, seconds)
+    }
+}
+
+private fun Long.formatEta(): String {
+    val minutes = this / 60L
+    val seconds = this % 60L
+    return if (minutes > 0L) {
+        "${minutes}m ${seconds}s"
+    } else {
+        "${seconds}s"
     }
 }
 

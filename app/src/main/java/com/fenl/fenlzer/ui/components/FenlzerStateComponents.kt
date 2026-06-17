@@ -1,10 +1,17 @@
 package com.fenl.fenlzer.ui.components
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Warning
@@ -15,6 +22,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 
@@ -68,4 +78,34 @@ fun FenlzerInlineError(
             Text(text = message, style = MaterialTheme.typography.bodyMedium)
         }
     }
+}
+
+@Composable
+fun FenlzerLoadingPlaceholder(
+    modifier: Modifier = Modifier
+) {
+    val transition = rememberInfiniteTransition(label = "fenlzerLoadingPlaceholder")
+    val shimmerOffset = transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1100),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "fenlzerLoadingPlaceholderOffset"
+    )
+    val base = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)
+    val highlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(base, highlight, base),
+                    start = Offset(x = -180f + shimmerOffset.value * 360f, y = 0f),
+                    end = Offset(x = shimmerOffset.value * 360f, y = 180f)
+                )
+            )
+    ) {}
 }

@@ -11,10 +11,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material3.Icon
@@ -36,78 +36,76 @@ fun EmptyMiniPlayer(
     onMainAreaClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Surface(
+    Box(
         modifier = modifier
             .fillMaxWidth()
-            .testTag("emptyMiniPlayer"),
-        tonalElevation = 3.dp,
-        color = MaterialTheme.colorScheme.surface
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .testTag("emptyMiniPlayer")
     ) {
-        Column {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(64.dp)
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(EmptyMiniPlayerCardHeight),
+            tonalElevation = 6.dp,
+            shadowElevation = 8.dp,
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface
+        ) {
+            Column {
                 Row(
                     modifier = Modifier
-                        .weight(1f)
-                        .testTag("emptyMiniPlayerMainArea")
-                        .clip(MaterialTheme.shapes.small)
-                        .clickable(onClick = onMainAreaClick)
-                        .padding(end = 8.dp),
+                        .fillMaxWidth()
+                        .height(66.dp)
+                        .padding(start = 10.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(
+                    MiniPlayerIconButton(Icons.Rounded.PlayArrow, "Play")
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Row(
                         modifier = Modifier
-                            .size(44.dp)
-                            .clip(MaterialTheme.shapes.small)
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                        contentAlignment = Alignment.Center
+                            .weight(1f)
+                            .testTag("emptyMiniPlayerMainArea")
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onMainAreaClick)
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.MusicNote,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "Import songs to start listening",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1
-                        )
-                        if (privateModeEnabled) {
+                        Column {
                             Text(
-                                text = "Private mode",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.testTag("emptyMiniPlayerPrivateModeIndicator")
+                                text = "Import songs to start listening",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1
                             )
+                            if (privateModeEnabled) {
+                                Text(
+                                    text = "Private mode",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.testTag("emptyMiniPlayerPrivateModeIndicator")
+                                )
+                            }
                         }
                     }
+
+                    MiniPlayerIconButton(Icons.Rounded.Favorite, "Favourite")
+                    MiniPlayerIconButton(Icons.Rounded.SkipNext, "Next")
+                    MiniPlayerIconButton(Icons.Rounded.MoreVert, "More")
                 }
 
-                MiniPlayerIconButton(Icons.Rounded.Favorite, "Favourite")
-                MiniPlayerIconButton(Icons.Rounded.PlayArrow, "Play")
-                MiniPlayerIconButton(Icons.Rounded.SkipNext, "Next")
-                MiniPlayerIconButton(Icons.Rounded.MoreVert, "More")
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .testTag("emptyMiniPlayerInactiveProgress")
+                )
             }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(2.dp)
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .testTag("emptyMiniPlayerInactiveProgress")
-            )
         }
     }
 }
+
+private val EmptyMiniPlayerCardHeight = 84.dp
 
 @Composable
 private fun MiniPlayerIconButton(
@@ -118,10 +116,26 @@ private fun MiniPlayerIconButton(
         onClick = { },
         enabled = false
     ) {
-        Icon(
-            imageVector = imageVector,
-            contentDescription = contentDescription,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-        )
+        if (contentDescription == "Play") {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = imageVector,
+                            contentDescription = contentDescription,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                        )
+                    }
+        } else {
+            Icon(
+                imageVector = imageVector,
+                contentDescription = contentDescription,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+            )
+        }
     }
 }

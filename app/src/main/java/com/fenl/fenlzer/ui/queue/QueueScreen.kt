@@ -14,13 +14,14 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.MusicNote
@@ -57,11 +58,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import coil3.compose.AsyncImage
@@ -71,9 +76,11 @@ import com.fenl.fenlzer.ui.components.DragStepHandle
 import com.fenl.fenlzer.ui.theme.Dimensions
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.roundToInt
+import androidx.compose.ui.layout.ContentScale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import androidx.compose.ui.layout.ContentScale
+import com.fenl.fenlzer.data.repository.QueueListEditor
 
 @Composable
 fun QueueScreen(
@@ -91,8 +98,11 @@ fun QueueScreen(
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
     val listState = rememberLazyListState()
-    val rowHeightPx = with(LocalDensity.current) { QueueRowHeight.toPx() }
+    val fallbackRowHeightPx = with(LocalDensity.current) { QueueRowHeight.toPx() }
+    var measuredRowHeightPx by remember { mutableIntStateOf(0) }
+    val rowHeightPx = measuredRowHeightPx.takeIf { it > 0 }?.toFloat() ?: fallbackRowHeightPx
 
     var pendingHiddenIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var saveDialogOpen by remember { mutableStateOf(false) }
@@ -151,7 +161,7 @@ fun QueueScreen(
     fun updateDragOffsetSafely(newOffset: Float) {
         if (draggingQueueItemId == null || dragStartIndex !in visibleItems.indices || visibleItems.isEmpty()) return
         dragOffsetPx = newOffset.coerceIn(minDragOffsetPx(), maxDragOffsetPx())
-        dragTargetIndex = (dragStartIndex + (dragOffsetPx / rowHeightPx).toInt())
+        dragTargetIndex = (dragStartIndex + (dragOffsetPx / rowHeightPx).roundToInt())
             .coerceIn(0, visibleItems.lastIndex)
     }
 
@@ -172,6 +182,7 @@ fun QueueScreen(
                 fromIndex = dragStartIndex,
                 toIndex = dragTargetIndex
             )
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
             onMoveItem(itemId, delta)
         }
 
@@ -183,6 +194,7 @@ fun QueueScreen(
 
     fun requestUndoableRemoval(item: QueueTrackItem) {
         if (item.queueItemId in pendingHiddenIds) return
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
         pendingHiddenIds = pendingHiddenIds + item.queueItemId
         pendingOrderIds = pendingOrderIds?.filterNot { it == item.queueItemId }
         scope.launch {
@@ -197,6 +209,31 @@ fun QueueScreen(
                 pendingOrderIds = null
             } else {
                 onRemoveItem(item.queueItemId)
+            }
+        }
+    }
+
+    fun requestUndoableClearUpcoming() {
+        val upcomingIds = visibleItems
+            .filter { it.state == QueueListEditor.STATE_UPCOMING }
+            .map { it.queueItemId }
+        if (upcomingIds.isEmpty()) return
+
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        pendingHiddenIds = pendingHiddenIds + upcomingIds
+        pendingOrderIds = pendingOrderIds?.filterNot { it in upcomingIds }
+        scope.launch {
+            val result = snackbarHostState.showSnackbar(
+                message = "Cleared upcoming songs",
+                actionLabel = "Undo",
+                withDismissAction = true,
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                pendingHiddenIds = pendingHiddenIds - upcomingIds.toSet()
+                pendingOrderIds = null
+            } else {
+                onClearUpcoming()
             }
         }
     }
@@ -282,7 +319,7 @@ fun QueueScreen(
                 QueueHeader(
                     playbackState = playbackState,
                     onBack = onBack,
-                    onClearUpcoming = onClearUpcoming,
+                    onClearUpcoming = ::requestUndoableClearUpcoming,
                     onShuffleQueue = onShuffleQueue,
                     onShuffleUpcoming = onShuffleUpcoming,
                     onSaveQueue = { saveDialogOpen = true }
@@ -329,7 +366,12 @@ fun QueueScreen(
                                 onMoveDown = { onMoveItem(item.queueItemId, 1) },
                                 onDragStart = { startDrag(item) },
                                 onDragDelta = ::dragBy,
-                                onDragEnd = { clearDrag(commit = true) }
+                                onDragEnd = { clearDrag(commit = true) },
+                                onMeasuredHeight = { heightPx ->
+                                    if (heightPx > 0 && measuredRowHeightPx != heightPx) {
+                                        measuredRowHeightPx = heightPx
+                                    }
+                                }
                             )
                         }
                     }
@@ -464,13 +506,25 @@ private fun QueueHeader(
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold
                 )
-                Text(
-                    text = playbackState.sourceLabel,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = playbackState.sourceLabel,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (playbackState.isModified) {
+                        QueueStateChip(text = "Modified")
+                    }
+                    if (playbackState.upcomingCount > 0) {
+                        QueueStateChip(text = "${playbackState.upcomingCount} up next")
+                    }
+                }
             }
 
             TextButton(onClick = onBack) {
@@ -521,6 +575,22 @@ private fun QueueHeader(
 }
 
 @Composable
+private fun QueueStateChip(text: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        shape = RoundedCornerShape(50)
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+        )
+    }
+}
+
+@Composable
 private fun EmptyQueueState(modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
@@ -560,7 +630,8 @@ private fun QueueRow(
     onMoveDown: () -> Unit,
     onDragStart: () -> Unit,
     onDragDelta: (Float) -> Unit,
-    onDragEnd: () -> Unit
+    onDragEnd: () -> Unit,
+    onMeasuredHeight: (Int) -> Unit
 ) {
     var confirmCurrentRemoval by remember { mutableStateOf(false) }
     var swipeOffsetX by remember(item.queueItemId) { mutableFloatStateOf(0f) }
@@ -592,15 +663,21 @@ private fun QueueRow(
 
     Box(
         modifier = Modifier
+            .zIndex(if (isDragging) 10f else 0f)
             .fillMaxWidth()
-            .heightIn(min = QueueRowHeight)
-            .graphicsLayer {
-                translationY = dragOffsetPx
-                shadowElevation = if (isDragging) 16f else 0f
-                scaleX = if (isDragging) 1.015f else 1f
-                scaleY = if (isDragging) 1.015f else 1f
+            .height(QueueRowHeight)
+            .onSizeChanged { size -> onMeasuredHeight(size.height) }
+            .offset {
+                IntOffset(
+                    x = 0,
+                    y = dragOffsetPx.roundToInt()
+                )
             }
-            .zIndex(if (isDragging) 2f else 0f)
+            .graphicsLayer {
+                shadowElevation = if (isDragging) 18f else 0f
+                scaleX = if (isDragging) 1.018f else 1f
+                scaleY = if (isDragging) 1.018f else 1f
+            }
     ) {
         if (swipeOffsetX > 0f && !isQueueDragActive) {
             Box(
@@ -621,7 +698,7 @@ private fun QueueRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = QueueRowHeight)
+                .height(QueueRowHeight)
                 .graphicsLayer { translationX = if (isQueueDragActive) 0f else swipeOffsetX }
                 .background(
                     if (isCurrent) {
@@ -635,7 +712,7 @@ private fun QueueRow(
             Row(
                 modifier = Modifier
                     .weight(1f)
-                    .heightIn(min = QueueRowHeight)
+                    .height(QueueRowHeight)
                     .pointerInput(isQueueDragActive, item.queueItemId) {
                         if (isQueueDragActive) return@pointerInput
                         detectHorizontalDragGestures(

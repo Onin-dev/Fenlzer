@@ -4,9 +4,13 @@ import android.app.Application
 import androidx.work.Configuration
 
 class FenlzerApplication : Application(), Configuration.Provider {
-    val appGraph: AppGraph by lazy {
+    private val appGraphDelegate = lazy {
         AppGraph.create(this)
     }
+    val appGraph: AppGraph by appGraphDelegate
+
+    fun appGraphIfInitialized(): AppGraph? =
+        if (appGraphDelegate.isInitialized()) appGraph else null
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().build()

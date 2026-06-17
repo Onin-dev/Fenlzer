@@ -198,6 +198,34 @@ data class CarMediaLibraryTree(
             }
         }
 
+    fun search(query: String, page: Int, pageSize: Int): List<CarMediaNode> {
+        val terms = query.trim()
+            .lowercase()
+            .split(Regex("\\s+"))
+            .filter { it.isNotBlank() }
+        if (terms.isEmpty()) return emptyList()
+
+        return childrenByParentId.getValue(CarMediaIds.SONGS)
+            .filter { node ->
+                val track = node.track ?: return@filter false
+                val searchable = listOf(track.title, track.artist, track.album)
+                    .joinToString(separator = " ")
+                    .lowercase()
+                terms.all(searchable::contains)
+            }
+            .paged(page = page, pageSize = pageSize)
+    }
+
+    fun searchTrackIds(query: String): List<String> =
+        search(query = query, page = 0, pageSize = Int.MAX_VALUE)
+            .mapNotNull { node -> node.track?.trackId }
+
+    fun childCount(parentId: String): Int =
+        childrenByParentId[parentId].orEmpty().size
+
+    fun searchCount(query: String): Int =
+        searchTrackIds(query).size
+
     private fun List<CarMediaNode>.paged(page: Int, pageSize: Int): List<CarMediaNode> {
         val safePage = page.coerceAtLeast(0)
         val safePageSize = pageSize.coerceAtLeast(1)

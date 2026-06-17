@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,13 +23,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -65,28 +70,43 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.fenl.fenlzer.data.repository.LibraryTrack
@@ -105,6 +125,11 @@ import java.util.Locale
 import com.fenl.fenlzer.ui.components.DragStepHandle
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.zIndex
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @Composable
 fun PlaylistsScreen(
@@ -137,9 +162,12 @@ fun PlaylistsScreen(
         shuffle: Boolean
     ) -> Unit,
     onPlayNext: (String) -> Unit,
+    onPlayNextTracks: (List<String>) -> Unit,
     onAddToQueue: (String) -> Unit,
+    onAddTracksToQueue: (List<String>) -> Unit,
     onToggleFavourite: (String, Boolean) -> Unit,
     onAddToPlaylist: (String, String) -> Unit,
+    onAddTracksToPlaylist: (List<String>, String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showCreateDialog by rememberSaveable { mutableStateOf(false) }
@@ -171,9 +199,12 @@ fun PlaylistsScreen(
             onReorderPlaylist = onReorderPlaylist,
             onPlayTrackList = onPlayTrackList,
             onPlayNext = onPlayNext,
+            onPlayNextTracks = onPlayNextTracks,
             onAddToQueue = onAddToQueue,
+            onAddTracksToQueue = onAddTracksToQueue,
             onToggleFavourite = onToggleFavourite,
             onAddToPlaylist = onAddToPlaylist,
+            onAddTracksToPlaylist = onAddTracksToPlaylist,
             modifier = modifier
         )
 
@@ -187,9 +218,12 @@ fun PlaylistsScreen(
                 onSaveSmartPlaylist = onSaveSmartPlaylist,
                 onPlayTrackList = onPlayTrackList,
                 onPlayNext = onPlayNext,
+                onPlayNextTracks = onPlayNextTracks,
                 onAddToQueue = onAddToQueue,
+                onAddTracksToQueue = onAddTracksToQueue,
                 onToggleFavourite = onToggleFavourite,
                 onAddToPlaylist = onAddToPlaylist,
+                onAddTracksToPlaylist = onAddTracksToPlaylist,
                 modifier = modifier
             )
         }
@@ -385,9 +419,12 @@ private fun RegularPlaylistDetailView(
         shuffle: Boolean
     ) -> Unit,
     onPlayNext: (String) -> Unit,
+    onPlayNextTracks: (List<String>) -> Unit,
     onAddToQueue: (String) -> Unit,
+    onAddTracksToQueue: (List<String>) -> Unit,
     onToggleFavourite: (String, Boolean) -> Unit,
     onAddToPlaylist: (String, String) -> Unit,
+    onAddTracksToPlaylist: (List<String>, String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var searchQuery by rememberSaveable(playlist.playlistId) { mutableStateOf("") }
@@ -400,8 +437,18 @@ private fun RegularPlaylistDetailView(
     var showRenameDialog by rememberSaveable { mutableStateOf(false) }
     var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
-    val visibleTracks = remember(playlist.tracks, searchQuery, sort) {
-        playlist.tracks.visibleTracks(searchQuery, sort)
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
+    var pendingRemovedTrackIds by remember(playlist.playlistId) { mutableStateOf(emptySet<String>()) }
+    val sourceTrackIds = playlist.tracks.map { it.trackId }.toSet()
+    LaunchedEffect(sourceTrackIds) {
+        pendingRemovedTrackIds = pendingRemovedTrackIds.intersect(sourceTrackIds)
+    }
+    val visibleTracks = remember(playlist.tracks, searchQuery, sort, pendingRemovedTrackIds) {
+        playlist.tracks
+            .filterNot { it.trackId in pendingRemovedTrackIds }
+            .visibleTracks(searchQuery, sort)
     }
     val canReorder = searchQuery.isBlank() && sort == PlaylistDetailSort.MANUAL
     val reorderHandlesVisible = canReorder && reorderMode && !selectionMode
@@ -448,6 +495,26 @@ private fun RegularPlaylistDetailView(
                 onBack()
             }
         )
+    }
+
+    fun requestUndoablePlaylistRemoval(trackId: String) {
+        if (trackId in pendingRemovedTrackIds) return
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        pendingRemovedTrackIds = pendingRemovedTrackIds + trackId
+        selectedTrackIds = selectedTrackIds - trackId
+        scope.launch {
+            val result = snackbarHostState.showSnackbar(
+                message = "Removed from playlist",
+                actionLabel = "Undo",
+                withDismissAction = true,
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                pendingRemovedTrackIds = pendingRemovedTrackIds - trackId
+            } else {
+                onRemoveTrackFromPlaylist(playlist.playlistId, trackId)
+            }
+        }
     }
 
     val header: @Composable () -> Unit = {
@@ -522,15 +589,33 @@ private fun RegularPlaylistDetailView(
         PlaylistBulkActionBar(
             selectedCount = selectedTrackIds.size,
             reorderMode = reorderMode,
-            canReorder = reorderHandlesVisible,
+            canReorder = canReorder && !selectionMode,
             onToggleReorder = {
                 reorderMode = !reorderMode
                 selectedTrackIds = emptySet()
             },
-            onAddToQueue = {
-                visibleTracks
+            onPlayNext = {
+                val selected = visibleTracks
                     .filter { it.trackId in selectedTrackIds }
-                    .forEach { onAddToQueue(it.trackId) }
+                    .map { it.trackId }
+                onPlayNextTracks(selected)
+                selectedTrackIds = emptySet()
+            },
+            onAddToQueue = {
+                val selected = visibleTracks
+                    .filter { it.trackId in selectedTrackIds }
+                    .map { it.trackId }
+                onAddTracksToQueue(selected)
+                selectedTrackIds = emptySet()
+            },
+            onAddToPlaylist = {
+                val selected = visibleTracks
+                    .filter { it.trackId in selectedTrackIds }
+                    .map { it.trackId }
+                onAddTracksToPlaylist(
+                    selected,
+                    if (selected.size == 1) "1 playlist song" else "${selected.size} playlist songs"
+                )
                 selectedTrackIds = emptySet()
             },
             onClearSelection = { selectedTrackIds = emptySet() }
@@ -544,6 +629,7 @@ private fun RegularPlaylistDetailView(
                     "No matching songs"
                 },
                 canReorder = canReorder,
+                reorderMode = reorderHandlesVisible,
                 sourceTracks = playlist.tracks,
             selectedTrackIds = selectedTrackIds,
             selectionMode = selectionMode,
@@ -568,7 +654,7 @@ private fun RegularPlaylistDetailView(
                     val reordered = playlist.tracks.move(trackId, offset)
                     onReorderPlaylist(playlist.playlistId, reordered.map { it.trackId })
                 },
-                onRemove = { trackId -> onRemoveTrackFromPlaylist(playlist.playlistId, trackId) },
+                onRemove = ::requestUndoablePlaylistRemoval,
                 onPlayNext = onPlayNext,
                 onAddToQueue = onAddToQueue,
                 onToggleFavourite = onToggleFavourite,
@@ -578,12 +664,16 @@ private fun RegularPlaylistDetailView(
         }
     }
 
-    if (isLandscape) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .testTag("regularPlaylistDetail")
+    ) {
+        if (isLandscape) {
         Row(
-            modifier = modifier
+            modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-                .testTag("regularPlaylistDetail"),
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Column(
@@ -591,7 +681,7 @@ private fun RegularPlaylistDetailView(
                     .widthIn(min = 236.dp, max = 310.dp)
                     .fillMaxHeight()
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 header()
             }
@@ -601,17 +691,24 @@ private fun RegularPlaylistDetailView(
                     .fillMaxHeight()
             )
         }
-    } else {
+        } else {
         Column(
-            modifier = modifier
+            modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 14.dp, vertical = 10.dp)
-                .testTag("regularPlaylistDetail"),
+                .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             header()
             tracks(Modifier.weight(1f))
         }
+        }
+
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(16.dp)
+        )
     }
 }
 
@@ -630,9 +727,12 @@ private fun SmartPlaylistDetailView(
         shuffle: Boolean
     ) -> Unit,
     onPlayNext: (String) -> Unit,
+    onPlayNextTracks: (List<String>) -> Unit,
     onAddToQueue: (String) -> Unit,
+    onAddTracksToQueue: (List<String>) -> Unit,
     onToggleFavourite: (String, Boolean) -> Unit,
     onAddToPlaylist: (String, String) -> Unit,
+    onAddTracksToPlaylist: (List<String>, String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var searchQuery by rememberSaveable(playlist.smartPlaylistId) { mutableStateOf("") }
@@ -729,10 +829,28 @@ private fun SmartPlaylistDetailView(
             reorderMode = false,
             canReorder = false,
             onToggleReorder = {},
-            onAddToQueue = {
-                visibleTracks
+            onPlayNext = {
+                val selected = visibleTracks
                     .filter { it.trackId in selectedTrackIds }
-                    .forEach { onAddToQueue(it.trackId) }
+                    .map { it.trackId }
+                onPlayNextTracks(selected)
+                selectedTrackIds = emptySet()
+            },
+            onAddToQueue = {
+                val selected = visibleTracks
+                    .filter { it.trackId in selectedTrackIds }
+                    .map { it.trackId }
+                onAddTracksToQueue(selected)
+                selectedTrackIds = emptySet()
+            },
+            onAddToPlaylist = {
+                val selected = visibleTracks
+                    .filter { it.trackId in selectedTrackIds }
+                    .map { it.trackId }
+                onAddTracksToPlaylist(
+                    selected,
+                    if (selected.size == 1) "1 smart playlist song" else "${selected.size} smart playlist songs"
+                )
                 selectedTrackIds = emptySet()
             },
             onClearSelection = { selectedTrackIds = emptySet() }
@@ -746,6 +864,7 @@ private fun SmartPlaylistDetailView(
                     "No matching songs"
                 },
                 canReorder = false,
+                reorderMode = false,
                 sourceTracks = playlist.tracks,
             selectedTrackIds = selectedTrackIds,
             selectionMode = selectionMode,
@@ -1115,7 +1234,9 @@ private fun PlaylistBulkActionBar(
     reorderMode: Boolean,
     canReorder: Boolean,
     onToggleReorder: () -> Unit,
+    onPlayNext: () -> Unit,
     onAddToQueue: () -> Unit,
+    onAddToPlaylist: () -> Unit,
     onClearSelection: () -> Unit
 ) {
     Row(
@@ -1133,9 +1254,17 @@ private fun PlaylistBulkActionBar(
         }
 
         if (selectedCount > 0) {
+            FilledTonalButton(onClick = onPlayNext) {
+                Icon(imageVector = Icons.AutoMirrored.Rounded.PlaylistPlay, contentDescription = null)
+                Text(text = "Play next", modifier = Modifier.padding(start = 8.dp))
+            }
             FilledTonalButton(onClick = onAddToQueue) {
                 Icon(imageVector = Icons.Rounded.Queue, contentDescription = null)
-                Text(text = "Add $selectedCount to queue", modifier = Modifier.padding(start = 8.dp))
+                Text(text = "Queue", modifier = Modifier.padding(start = 8.dp))
+            }
+            FilledTonalButton(onClick = onAddToPlaylist) {
+                Icon(imageVector = Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null)
+                Text(text = "Playlist", modifier = Modifier.padding(start = 8.dp))
             }
             TextButton(onClick = onClearSelection) {
                 Text(text = "Clear")
@@ -1150,6 +1279,7 @@ private fun PlaylistTrackList(
     tracks: List<PlaylistTrackItem>,
     emptyText: String,
     canReorder: Boolean,
+    reorderMode: Boolean,
     sourceTracks: List<PlaylistTrackItem>,
     selectedTrackIds: Set<String> = emptySet(),
     selectionMode: Boolean = false,
@@ -1170,93 +1300,224 @@ private fun PlaylistTrackList(
         return
     }
 
-    LazyColumn(
-        modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(bottom = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        items(tracks, key = { it.trackId }) { track ->
-            val sourceIndex = sourceTracks.indexOfFirst { it.trackId == track.trackId }
-            val isSelected = track.trackId in selectedTrackIds
+    val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
+    val listState = rememberLazyListState()
+    val fallbackRowHeightPx = with(LocalDensity.current) { PlaylistRowHeight.toPx() }
+    var measuredRowHeightPx by remember { mutableIntStateOf(0) }
+    val rowHeightPx = measuredRowHeightPx.takeIf { it > 0 }?.toFloat() ?: fallbackRowHeightPx
+    var pendingOrderIds by remember { mutableStateOf<List<String>?>(null) }
+    var draggingTrackId by remember { mutableStateOf<String?>(null) }
+    var dragStartIndex by remember { mutableIntStateOf(-1) }
+    var dragTargetIndex by remember { mutableIntStateOf(-1) }
+    var dragOffsetPx by remember { mutableFloatStateOf(0f) }
 
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(
-                        if (isSelected) {
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.70f)
-                        } else {
-                            MaterialTheme.colorScheme.surface
-                        }
-                    )
-                    .combinedClickable(
-                        onClick = {
-                            if (selectionMode) {
-                                onToggleSelection(track.trackId)
-                            } else {
-                                onTrackClick(track)
-                            }
-                        },
-                        onLongClick = { onEnterSelection(track.trackId) }
-                    )
-            ) {
-                PlaylistTrackRow(
-                    track = track,
-                    showRemove = showRemove,
-                    canReorder = canReorder,
-                    canMoveUp = canReorder && sourceIndex > 0,
-                    canMoveDown = canReorder && sourceIndex >= 0 && sourceIndex < sourceTracks.lastIndex,
-                    onMoveUp = { onMove(track.trackId, -1) },
-                    onMoveDown = { onMove(track.trackId, 1) },
-                    onClick = {
-                        if (selectionMode) {
-                            onToggleSelection(track.trackId)
-                        } else {
-                            onTrackClick(track)
-                        }
-                    },
-                    onRemove = { onRemove(track.trackId) },
-                    onPlayNext = { onPlayNext(track.trackId) },
-                    onAddToQueue = { onAddToQueue(track.trackId) },
-                    onToggleFavourite = { onToggleFavourite(track.trackId, !track.isFavourite) },
-                    onAddToPlaylist = { onAddToPlaylist(track.trackId, "") }
-                )
+    val sourceIds = tracks.map { it.trackId }
+    val sourceIdSet = sourceIds.toSet()
+
+    LaunchedEffect(sourceIds.joinToString("|")) {
+        val pending = pendingOrderIds
+        if (pending != null) {
+            when {
+                pending == sourceIds -> pendingOrderIds = null
+                pending.toSet() != sourceIdSet -> pendingOrderIds = null
             }
         }
     }
-}
 
+    val visibleTracks = remember(tracks, pendingOrderIds) {
+        val pending = pendingOrderIds
+        if (pending != null && pending.toSet() == sourceIdSet) {
+            val byId = tracks.associateBy { it.trackId }
+            pending.mapNotNull(byId::get)
+        } else {
+            tracks
+        }
+    }
+
+    fun minDragOffsetPx(): Float = if (dragStartIndex >= 0) -dragStartIndex * rowHeightPx else 0f
+
+    fun maxDragOffsetPx(): Float =
+        if (dragStartIndex >= 0) (visibleTracks.lastIndex - dragStartIndex) * rowHeightPx else 0f
+
+    fun updateDragOffsetSafely(newOffset: Float) {
+        if (draggingTrackId == null || dragStartIndex !in visibleTracks.indices || visibleTracks.isEmpty()) return
+        dragOffsetPx = newOffset.coerceIn(minDragOffsetPx(), maxDragOffsetPx())
+        dragTargetIndex = (dragStartIndex + (dragOffsetPx / rowHeightPx).roundToInt())
+            .coerceIn(0, visibleTracks.lastIndex)
+    }
+
+    fun clearDrag(commit: Boolean) {
+        val trackId = draggingTrackId
+        val delta = dragTargetIndex - dragStartIndex
+        if (commit && trackId != null && delta != 0 && dragStartIndex in visibleTracks.indices && dragTargetIndex in visibleTracks.indices) {
+            pendingOrderIds = moveTrackId(
+                ids = visibleTracks.map { it.trackId },
+                fromIndex = dragStartIndex,
+                toIndex = dragTargetIndex
+            )
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            onMove(trackId, delta)
+        }
+        draggingTrackId = null
+        dragStartIndex = -1
+        dragTargetIndex = -1
+        dragOffsetPx = 0f
+    }
+
+    fun startDrag(track: PlaylistTrackItem) {
+        val index = visibleTracks.indexOfFirst { it.trackId == track.trackId }
+        if (index < 0) return
+        draggingTrackId = track.trackId
+        dragStartIndex = index
+        dragTargetIndex = index
+        dragOffsetPx = 0f
+    }
+
+    fun dragBy(deltaY: Float) {
+        if (draggingTrackId == null || dragStartIndex !in visibleTracks.indices || visibleTracks.isEmpty()) return
+        val canMoveUp = dragOffsetPx > minDragOffsetPx()
+        val canMoveDown = dragOffsetPx < maxDragOffsetPx()
+        if ((deltaY < 0f && !canMoveUp) || (deltaY > 0f && !canMoveDown)) {
+            updateDragOffsetSafely(dragOffsetPx)
+            return
+        }
+
+        updateDragOffsetSafely(dragOffsetPx + deltaY)
+        autoScrollPlaylistIfNeeded(
+            scope = scope,
+            listState = listState,
+            dragTargetIndex = dragTargetIndex,
+            deltaY = deltaY,
+            canScrollUp = dragTargetIndex > 0 || dragOffsetPx > minDragOffsetPx(),
+            canScrollDown = dragTargetIndex < visibleTracks.lastIndex || dragOffsetPx < maxDragOffsetPx(),
+            onScrolled = { consumedScrollPx ->
+                updateDragOffsetSafely(dragOffsetPx + consumedScrollPx)
+            }
+        )
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(bottom = 12.dp),
+        userScrollEnabled = draggingTrackId == null
+    ) {
+        itemsIndexed(
+            items = visibleTracks,
+            key = { _, track -> track.trackId }
+        ) { index, track ->
+            val isSelected = track.trackId in selectedTrackIds
+            val isDragging = track.trackId == draggingTrackId
+            val rowCanMoveUp = if (isDragging) dragTargetIndex > 0 else index > 0
+            val rowCanMoveDown = if (isDragging) {
+                dragTargetIndex < visibleTracks.lastIndex
+            } else {
+                index < visibleTracks.lastIndex
+            }
+
+            PlaylistTrackRow(
+                track = track,
+                showRemove = showRemove,
+                canReorder = reorderMode,
+                isPlaylistDragActive = draggingTrackId != null,
+                isDragging = isDragging,
+                isSelected = isSelected,
+                dragOffsetPx = visualPlaylistRowOffsetPx(
+                    index = index,
+                    isDragging = isDragging,
+                    dragOffsetPx = dragOffsetPx,
+                    dragStartIndex = dragStartIndex,
+                    dragTargetIndex = dragTargetIndex,
+                    rowHeightPx = rowHeightPx
+                ),
+                canMoveUp = canReorder && rowCanMoveUp,
+                canMoveDown = canReorder && rowCanMoveDown,
+                onMoveUp = { onMove(track.trackId, -1) },
+                onMoveDown = { onMove(track.trackId, 1) },
+                onClick = {
+                    if (selectionMode) {
+                        onToggleSelection(track.trackId)
+                    } else {
+                        onTrackClick(track)
+                    }
+                },
+                onLongClick = { onEnterSelection(track.trackId) },
+                onRemove = { onRemove(track.trackId) },
+                onPlayNext = { onPlayNext(track.trackId) },
+                onAddToQueue = { onAddToQueue(track.trackId) },
+                onToggleFavourite = { onToggleFavourite(track.trackId, !track.isFavourite) },
+                onAddToPlaylist = { onAddToPlaylist(track.trackId, "") },
+                onDragStart = { startDrag(track) },
+                onDragDelta = ::dragBy,
+                onDragEnd = { clearDrag(commit = true) },
+                onMeasuredHeight = { heightPx ->
+                    if (heightPx > 0 && measuredRowHeightPx != heightPx) {
+                        measuredRowHeightPx = heightPx
+                    }
+                }
+            )
+        }
+    }
+}
 
 
 @Composable
 private fun PlaylistTrackRow(
     track: PlaylistTrackItem,
     canReorder: Boolean,
+    isPlaylistDragActive: Boolean,
+    isDragging: Boolean,
+    isSelected: Boolean,
+    dragOffsetPx: Float,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
     showRemove: Boolean,
     onClick: () -> Unit,
-    onMove: (String, Int) -> Unit,
-    onRemove: (String) -> Unit,
-    onPlayNext: (String) -> Unit,
-    onAddToQueue: (String) -> Unit,
-    onToggleFavourite: (String, Boolean) -> Unit,
-    onAddToPlaylist: (String, String) -> Unit
+    onLongClick: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onRemove: () -> Unit,
+    onPlayNext: () -> Unit,
+    onAddToQueue: () -> Unit,
+    onToggleFavourite: () -> Unit,
+    onAddToPlaylist: () -> Unit,
+    onDragStart: () -> Unit,
+    onDragDelta: (Float) -> Unit,
+    onDragEnd: () -> Unit,
+    onMeasuredHeight: (Int) -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    Surface(
-        tonalElevation = 1.dp,
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth()
+    val rowContainerColor = if (isSelected) {
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.70f)
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+    Box(
+        modifier = Modifier
+            .zIndex(if (isDragging) 10f else 0f)
+            .fillMaxWidth()
+            .height(PlaylistRowHeight)
+            .onSizeChanged { size -> onMeasuredHeight(size.height) }
+            .offset {
+                IntOffset(
+                    x = 0,
+                    y = dragOffsetPx.roundToInt()
+                )
+            }
+            .graphicsLayer {
+                shadowElevation = if (isDragging) 18f else 0f
+                scaleX = if (isDragging) 1.018f else 1f
+                scaleY = if (isDragging) 1.018f else 1f
+            }
     ) {
         ListItem(
+            colors = ListItemDefaults.colors(containerColor = rowContainerColor),
             headlineContent = {
                 Text(
                     text = track.displayTitle,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    fontWeight = FontWeight.SemiBold
+                    overflow = TextOverflow.Ellipsis
                 )
             },
             supportingContent = {
@@ -1268,92 +1529,97 @@ private fun PlaylistTrackRow(
                 )
             },
             leadingContent = {
-                Box(
-                    modifier = Modifier
-                        .size(52.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (track.thumbnailUri != null) {
-                        AsyncImage(
-                            model = track.thumbnailUri,
-                            contentDescription = null,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Rounded.MusicNote,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+                TrackArtwork(thumbnailUri = track.thumbnailUri)
             },
             trailingContent = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    DragStepHandle(
-                        enabled = canReorder && (canMoveUp || canMoveDown),
-                        contentDescription = if (canReorder) "Drag to reorder playlist song" else "Reorder disabled while searching or sorting",
-                        testTag = "playlistDragHandle_${track.trackId}",
-                        onMoveUp = { if (canMoveUp) onMove(track.trackId, -1) },
-                        onMoveDown = { if (canMoveDown) onMove(track.trackId, 1) }
+                    Text(
+                        text = track.durationMs.formatDuration(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Box {
-                        IconButton(onClick = { menuExpanded = true }) {
-                            Icon(imageVector = Icons.Rounded.MoreVert, contentDescription = "Track actions")
-                        }
-                        DropdownMenu(
-                            expanded = menuExpanded,
-                            onDismissRequest = { menuExpanded = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text(text = "Play Next") },
-                                leadingIcon = { Icon(imageVector = Icons.Rounded.Queue, contentDescription = null) },
-                                onClick = {
-                                    menuExpanded = false
-                                    onPlayNext(track.trackId)
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text(text = "Add to Queue") },
-                                leadingIcon = { Icon(imageVector = Icons.Rounded.Queue, contentDescription = null) },
-                                onClick = {
-                                    menuExpanded = false
-                                    onAddToQueue(track.trackId)
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text(text = if (track.isFavourite) "Remove Favourite" else "Favourite") },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = if (track.isFavourite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                                        contentDescription = null
-                                    )
-                                },
-                                onClick = {
-                                    menuExpanded = false
-                                    onToggleFavourite(track.trackId, !track.isFavourite)
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text(text = "Add to Playlist") },
-                                leadingIcon = { Icon(imageVector = Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null) },
-                                onClick = {
-                                    menuExpanded = false
-                                    onAddToPlaylist(track.trackId, track.displayTitle)
-                                }
-                            )
-                            if (showRemove) {
+                    if (canReorder) {
+                        DragStepHandle(
+                            enabled = canMoveUp || canMoveDown,
+                            canMoveUp = canMoveUp,
+                            canMoveDown = canMoveDown,
+                            contentDescription = "Reorder playlist song",
+                            testTag = "playlistDragHandle_${track.trackId}",
+                            onMoveUp = { if (canMoveUp) onMoveUp() },
+                            onMoveDown = { if (canMoveDown) onMoveDown() },
+                            onDragStart = onDragStart,
+                            onDragDelta = onDragDelta,
+                            onDragEnd = onDragEnd
+                        )
+                    } else {
+                        Box {
+                            IconButton(onClick = { menuExpanded = true }) {
+                                Icon(imageVector = Icons.Rounded.MoreVert, contentDescription = "Song actions")
+                            }
+                            DropdownMenu(
+                                expanded = menuExpanded,
+                                onDismissRequest = { menuExpanded = false }
+                            ) {
                                 DropdownMenuItem(
-                                    text = { Text(text = "Remove from Playlist") },
-                                    leadingIcon = { Icon(imageVector = Icons.Rounded.Delete, contentDescription = null) },
+                                    text = { Text(text = "Play Next") },
                                     onClick = {
                                         menuExpanded = false
-                                        onRemove(track.trackId)
+                                        onPlayNext()
                                     }
                                 )
+                                DropdownMenuItem(
+                                    text = { Text(text = "Add to Queue") },
+                                    leadingIcon = { Icon(imageVector = Icons.Rounded.Queue, contentDescription = null) },
+                                    onClick = {
+                                        menuExpanded = false
+                                        onAddToQueue()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(text = "Add to Playlist") },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                                            contentDescription = null
+                                        )
+                                    },
+                                    onClick = {
+                                        menuExpanded = false
+                                        onAddToPlaylist()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(text = if (track.isFavourite) "Remove Favourite" else "Favourite")
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = if (track.isFavourite) {
+                                                Icons.Rounded.Favorite
+                                            } else {
+                                                Icons.Rounded.FavoriteBorder
+                                            },
+                                            contentDescription = null
+                                        )
+                                    },
+                                    onClick = {
+                                        menuExpanded = false
+                                        onToggleFavourite()
+                                    }
+                                )
+                                if (showRemove) {
+                                    HorizontalDivider()
+                                    DropdownMenuItem(
+                                        text = { Text(text = "Remove from Playlist") },
+                                        leadingIcon = {
+                                            Icon(imageVector = Icons.Rounded.Delete, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            menuExpanded = false
+                                            onRemove()
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -1361,141 +1627,88 @@ private fun PlaylistTrackRow(
             },
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onClick)
+                .height(PlaylistRowHeight)
+                .clip(RoundedCornerShape(8.dp))
+                .combinedClickable(
+                    enabled = !isPlaylistDragActive,
+                    onClick = onClick,
+                    onLongClick = onLongClick
+                )
+                .testTag("playlistTrackRow_${track.trackId}")
         )
     }
 }
 
+private val PlaylistRowHeight = 72.dp
 
-@Composable
-private fun PlaylistTrackRow(
-    track: PlaylistTrackItem,
-    canReorder: Boolean,
-    canMoveUp: Boolean,
-    canMoveDown: Boolean,
-    showRemove: Boolean,
-    onClick: () -> Unit,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit,
-    onRemove: () -> Unit,
-    onPlayNext: () -> Unit,
-    onAddToQueue: () -> Unit,
-    onToggleFavourite: () -> Unit,
-    onAddToPlaylist: () -> Unit
+private fun visualPlaylistRowOffsetPx(
+    index: Int,
+    isDragging: Boolean,
+    dragOffsetPx: Float,
+    dragStartIndex: Int,
+    dragTargetIndex: Int,
+    rowHeightPx: Float
+): Float {
+    if (dragStartIndex < 0 || dragTargetIndex < 0) return 0f
+    if (isDragging) return dragOffsetPx
+
+    return when {
+        dragTargetIndex > dragStartIndex && index in (dragStartIndex + 1)..dragTargetIndex -> -rowHeightPx
+        dragTargetIndex < dragStartIndex && index in dragTargetIndex until dragStartIndex -> rowHeightPx
+        else -> 0f
+    }
+}
+
+private fun moveTrackId(
+    ids: List<String>,
+    fromIndex: Int,
+    toIndex: Int
+): List<String> {
+    if (fromIndex !in ids.indices || toIndex !in ids.indices || fromIndex == toIndex) return ids
+    return ids.toMutableList().apply {
+        val moved = removeAt(fromIndex)
+        add(toIndex, moved)
+    }
+}
+
+private fun autoScrollPlaylistIfNeeded(
+    scope: CoroutineScope,
+    listState: LazyListState,
+    dragTargetIndex: Int,
+    deltaY: Float,
+    canScrollUp: Boolean,
+    canScrollDown: Boolean,
+    onScrolled: (Float) -> Unit
 ) {
-    var menuExpanded by remember { mutableStateOf(false) }
-    ListItem(
-        headlineContent = {
-            Text(
-                text = track.displayTitle,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        },
-        supportingContent = {
-            Text(
-                text = track.artist.ifBlank { "Unknown artist" },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        },
-        leadingContent = {
-            TrackArtwork(thumbnailUri = track.thumbnailUri)
-        },
-        trailingContent = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = track.durationMs.formatDuration(),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                if (canReorder) {
-                    IconButton(onClick = onMoveUp, enabled = canMoveUp) {
-                        Icon(imageVector = Icons.Rounded.ArrowUpward, contentDescription = "Move up")
-                    }
-                    IconButton(onClick = onMoveDown, enabled = canMoveDown) {
-                        Icon(imageVector = Icons.Rounded.ArrowDownward, contentDescription = "Move down")
-                    }
-                }
-                Box {
-                    IconButton(onClick = { menuExpanded = true }) {
-                        Icon(imageVector = Icons.Rounded.MoreVert, contentDescription = "Song actions")
-                    }
-                    DropdownMenu(
-                        expanded = menuExpanded,
-                        onDismissRequest = { menuExpanded = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text(text = "Play Next") },
-                            onClick = {
-                                menuExpanded = false
-                                onPlayNext()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text(text = "Add to Queue") },
-                            leadingIcon = { Icon(imageVector = Icons.Rounded.Queue, contentDescription = null) },
-                            onClick = {
-                                menuExpanded = false
-                                onAddToQueue()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text(text = "Add to Playlist") },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Rounded.PlaylistAdd,
-                                    contentDescription = null
-                                )
-                            },
-                            onClick = {
-                                menuExpanded = false
-                                onAddToPlaylist()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = {
-                                Text(text = if (track.isFavourite) "Remove Favourite" else "Favourite")
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = if (track.isFavourite) {
-                                        Icons.Rounded.Favorite
-                                    } else {
-                                        Icons.Rounded.FavoriteBorder
-                                    },
-                                    contentDescription = null
-                                )
-                            },
-                            onClick = {
-                                menuExpanded = false
-                                onToggleFavourite()
-                            }
-                        )
-                        if (showRemove) {
-                            HorizontalDivider()
-                            DropdownMenuItem(
-                                text = { Text(text = "Remove from Playlist") },
-                                leadingIcon = {
-                                    Icon(imageVector = Icons.Rounded.Delete, contentDescription = null)
-                                },
-                                onClick = {
-                                    menuExpanded = false
-                                    onRemove()
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-        },
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .combinedClickable(onClick = onClick)
-            .testTag("playlistTrackRow_${track.trackId}")
-    )
+    val layoutInfo = listState.layoutInfo
+    val visibleInfo = layoutInfo.visibleItemsInfo
+    if (visibleInfo.isEmpty()) return
+
+    val draggedInfo = visibleInfo.firstOrNull { it.index == dragTargetIndex }
+    val firstVisible = visibleInfo.first()
+    val lastVisible = visibleInfo.last()
+
+    val thresholdPx = (draggedInfo?.size ?: firstVisible.size) * 3.25f
+    val draggedTop = draggedInfo?.offset ?: if (deltaY < 0f) firstVisible.offset else lastVisible.offset
+    val draggedBottom = draggedTop + (draggedInfo?.size ?: firstVisible.size)
+    val distanceToTop = draggedTop - layoutInfo.viewportStartOffset
+    val distanceToBottom = layoutInfo.viewportEndOffset - draggedBottom
+
+    val direction = when {
+        canScrollUp && deltaY < 0f && dragTargetIndex > 0 &&
+            (distanceToTop < thresholdPx || dragTargetIndex <= firstVisible.index + 1) -> -1f
+        canScrollDown && deltaY > 0f && dragTargetIndex < lastVisible.index &&
+            (distanceToBottom < thresholdPx || dragTargetIndex >= lastVisible.index - 1) -> 1f
+        else -> 0f
+    }
+
+    if (direction != 0f) {
+        val scrollAmount = direction * (abs(deltaY) * 4.6f).coerceIn(44f, 190f)
+        scope.launch {
+            val consumed = listState.scrollBy(scrollAmount)
+            onScrolled(consumed)
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
